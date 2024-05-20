@@ -4,7 +4,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from gym.spaces import Box, Dict
-from ray.rllib.algorithms.callbacks import DefaultCallbacks
+# from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.rllib.env import MultiAgentEnv
 import cv2
 
@@ -12,6 +12,9 @@ def rgb2gray(rgb, gray_scale=True):
     if gray_scale:
         return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140])
     return rgb
+
+def resize(obs, gray_scale, dsize=(32, 32)):
+    return cv2.resize(rgb2gray(obs, gray_scale), dsize=dsize, interpolation=cv2.INTER_NEAREST)
 
 _MAP_ENV_ACTIONS = {
     "MOVE_LEFT": [0, -1],  # Move left
@@ -26,6 +29,7 @@ _MAP_ENV_ACTIONS = {
 
 ORIENTATIONS = {"LEFT": [0, -1], "RIGHT": [0, 1], "UP": [-1, 0], "DOWN": [1, 0]}
 
+OBSERVATION_DIM = 48
 
 DEFAULT_COLOURS = {
     b" ": np.array([0, 0, 0], dtype=np.uint8),  # Black background
@@ -169,7 +173,7 @@ class MapEnv(MultiAgentEnv):
                 low=0,
                 high=255,
                 # shape=(2 * self.view_len + 1, 2 * self.view_len + 1, 3),
-                shape=(84, 84, 1 if self.gray_scale else 3),
+                shape=(OBSERVATION_DIM, OBSERVATION_DIM, 1 if self.gray_scale else 3),
                 dtype=np.uint8,
             )
         }
@@ -330,8 +334,9 @@ class MapEnv(MultiAgentEnv):
                 observations[agent.agent_id] = {"curr_obs": rgb_arr}
             rewards[agent.agent_id] = agent.compute_reward()
             dones[agent.agent_id] = agent.get_done() 
-            infos[agent.agent_id] = {'human_obs': cv2.resize(self.full_map_to_colors(),
-                                                             dsize=(84, 84), interpolation=cv2.INTER_NEAREST)}
+            infos[agent.agent_id] = {'human_obs': resize(self.full_map_to_colors(), False, dsize=(OBSERVATION_DIM, OBSERVATION_DIM))}
+            
+            
 
         if self.use_collective_reward:
             collective_reward = sum(rewards.values())
@@ -452,7 +457,9 @@ class MapEnv(MultiAgentEnv):
         ]
         if len(view_slice) == 0:
             rotated_view = np.zeros((2 * self.view_len + 1, 2 * self.view_len + 1, 3), dtype=int)
-            return cv2.resize(rgb2gray(rotated_view, self.gray_scale), dsize=(84, 84), interpolation=cv2.INTER_NEAREST)
+            return resize(rotated_view, self.gray_scale, dsize=(OBSERVATION_DIM, OBSERVATION_DIM))
+            
+            
         if agent.orientation == "UP":
             rotated_view = view_slice
         elif agent.orientation == "LEFT":
@@ -463,7 +470,7 @@ class MapEnv(MultiAgentEnv):
             rotated_view = np.rot90(view_slice, k=1, axes=(1, 0))
         # change middle pixel to be the "Self" color
         rotated_view[self.map_padding, self.map_padding, :] = self.color_map[chr(self.ord + self.agent_id_to_int(agent)).encode('utf-8')]
-        return np.expand_dims(cv2.resize(rgb2gray(rotated_view, self.gray_scale), dsize=(84, 84), interpolation=cv2.INTER_NEAREST), -1)
+        return np.expand_dims(resize(rotated_view, self.gray_scale, dsize=(OBSERVATION_DIM, OBSERVATION_DIM)), -1)
 
     def map_to_colors(self, mmap, color_map, rgb_arr, orientation="UP"):
         """Converts a map to an array of RGB values.
@@ -979,9 +986,9 @@ class MapEnv(MultiAgentEnv):
             dtype=np.uint8,
         )
 
-    @staticmethod
-    def get_environment_callbacks():
-        return DefaultCallbacks
+    # @staticmethod
+    # def get_environment_callbacks():
+    #     return DefaultCallbacks
 
     @staticmethod
     def safe_mean(arr):

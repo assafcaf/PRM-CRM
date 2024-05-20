@@ -11,6 +11,7 @@ from collections import deque
 
 class SyntheticComparisonCollector(object):
     def __init__(self, max_len=1000):
+        self.max_len = max_len
         self._comparisons = deque(maxlen=max_len)
 
     def add_segment_pair(self, left_seg, right_seg):
@@ -25,6 +26,9 @@ class SyntheticComparisonCollector(object):
     def __len__(self):
         return len(self._comparisons)
 
+    def buffer_usage(self):
+        return len(self._comparisons) / self.max_len
+    
     @property
     def labeled_comparisons(self):
         return [comp for comp in self._comparisons if comp['label'] is not None]

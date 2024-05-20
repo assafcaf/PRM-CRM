@@ -20,6 +20,8 @@ from agents.independent_dqn.buffer import PredictorBuffer
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.vec_env import DummyVecEnv
 
+import psutil 
+
 #################################### ENV ORDER ####################################
 # env order: [agent_1, ..., agent_n] * num_envs
 
@@ -117,7 +119,7 @@ class IndependentDQN(sb3_DQN):
                             max_grad_norm=max_grad_norm,
                             _init_setup_model=_init_setup_model,
                             policy_kwargs=policy_kwargs,
-                            verbose=verbose,
+                            verbose=0,
                             device=device)
                          for _ in range(self.num_agents)]
 
@@ -175,7 +177,13 @@ class IndependentDQN(sb3_DQN):
                 # Special case when the user passes `gradient_steps=0`
                 if gradient_steps > 0:
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
-
+            
+            # check memory usage and if it exceeds 80% shut down the training 
+            if psutil.virtual_memory().percent > 80:
+                print("Memory usage is above 80%. Stopping training.")
+                exit()
+            
+          
         callback.on_training_end()
 
         return self
@@ -228,6 +236,12 @@ class IndependentDQN(sb3_DQN):
         if len(self.ep_success_buffer) > 0:
             self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
         # Pass the number of timesteps for tensorboard
+        
+        self.logger.record("usage/memory", psutil.virtual_memory().percent)
+        self.logger.record("usage/cpu", psutil.cpu_percent())
+        self.logger.record("usage/dqn_buffer", self.agents[0].replay_buffer.size() / self.buffer_size)
+        self.logger.record("usage/predictor_buffer", self.predictor.buffer_usage())
+        
         self.logger.dump(step=self.num_timesteps)            
     
     def collect_rollouts(

@@ -139,7 +139,7 @@ class ComparisonRewardPredictor(RewardModel):
 
         # We may be in a new part of the environment, so we take new segments to build comparisons from
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
-        if segment:
+        if segment and random.random() < 0.25:
             self.recent_segments.append(segment)
 
         # If we need more comparisons, then we build them from our recent segments
@@ -229,3 +229,34 @@ class ComparisonRewardPredictor(RewardModel):
         self.agent_logger.log_simple("labels/total_comparisons", len(self.comparison_collector))
         self.agent_logger.log_simple(
             "labels/labeled_comparisons", len(self.comparison_collector.labeled_decisive_comparisons))
+    
+    def buffer_usage(self):
+        return self.comparison_collector.buffer_usage()
+    
+
+    class PRMComparisonRewardPredictor(RewardModel):
+        def __init__(self, env, summary_writer, comparison_collector, agent_logger, label_schedule, stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4):
+            self.env = env
+            self.summary_writer = summary_writer
+            self.agent_logger = agent_logger
+            self.comparison_collector = comparison_collector
+            self.label_schedule = label_schedule
+            self.stacked_frames = stacked_frames
+            self.device = device
+            
+            # Set up some bookkeeping
+            self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
+            self._frames_per_segment = clip_length * env.fps
+            self._steps_since_last_training = 0
+            self._n_timesteps_per_predictor_training = train_freq  # How often should we train our predictor?
+            self._elapsed_predictor_training_iters = 0
+
+            # Build and initialize our predictor model
+
+            self.obs_shape = (stacked_frames*env.observation_space.shape[0],) + env.observation_space.shape[1:]
+            self.discrete_action_space = hasattr(env.action_space, "shape")
+            self.act_shape = (env.action_space.n,) if self.discrete_action_space else env.action_space.shape
+            
+            self.model = self._build_model()
+            self.loss = torch.nn.CrossEntropyLoss()
+            self.train_op = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)

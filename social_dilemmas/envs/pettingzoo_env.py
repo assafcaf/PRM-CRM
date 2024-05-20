@@ -6,7 +6,6 @@ from pettingzoo.utils import wrappers
 from pettingzoo.utils.env import ParallelEnv
 
 from social_dilemmas.envs.env_creator import get_env_creator
-import gym
 MAX_CYCLES = 40
 
 
