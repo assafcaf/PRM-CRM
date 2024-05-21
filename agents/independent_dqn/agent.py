@@ -19,6 +19,7 @@ from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from agents.independent_dqn.buffer import PredictorBuffer
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
 
 import psutil 
 
@@ -46,7 +47,7 @@ class IndependentDQN(sb3_DQN):
         gamma: float = 0.99,
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
-        replay_buffer_class: Optional[ReplayBuffer] = None,
+        replay_buffer_class: Optional[ReplayBuffer] = ReplayBuffer,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
         optimize_memory_usage: bool = False,
         target_update_interval: int = 10000,
@@ -160,7 +161,7 @@ class IndependentDQN(sb3_DQN):
         while self.num_timesteps < total_timesteps:
             rollout = self.collect_rollouts(
                 self.env,
-                train_freq=self.train_freq,
+                train_freq=self.agents[0].train_freq,
                 action_noise=self.action_noise,
                 callback=callback,
                 learning_starts=self.learning_starts,
@@ -239,7 +240,8 @@ class IndependentDQN(sb3_DQN):
         
         self.logger.record("usage/memory", psutil.virtual_memory().percent)
         self.logger.record("usage/cpu", psutil.cpu_percent())
-        self.logger.record("usage/dqn_buffer", self.agents[0].replay_buffer.size() / self.buffer_size)
+        self.logger.record("usage/dqn_buffer", self.agents[0].replay_buffer.size())
+        self.logger.record("usage/dqn_buffer_percentage", self.agents[0].replay_buffer.size() / self.agents[0].buffer_size * self.num_envs)
         self.logger.record("usage/predictor_buffer", self.predictor.buffer_usage())
         
         self.logger.dump(step=self.num_timesteps)            
@@ -317,19 +319,18 @@ class IndependentDQN(sb3_DQN):
             new_obs, real_rewards, dones, infos = env.step(actions)
             
             # reward predictor
-            try:
-                human_obs = self.env.get_images()
-            except AttributeError:
-                human_obs = [info["human_obs"] for info in infos]
-                
             if not self.real_rewards:
                 pred_rewards = self.predictor.predict(obs_as_tensor(self._last_obs, self.policy.device),
                                                     th.tensor(actions).to(self.policy.device))
+                try:
+                    human_obs = self.env.get_images()
+                except AttributeError:
+                    human_obs = [info["human_obs"] for info in infos]
                 self.predictor_beffer.store(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
             else: pred_rewards = real_rewards
             
             
-            self.num_timesteps += env.num_envs*self.num_agents
+            self.num_timesteps += env.num_envs
             for agent in self.agents:
                  agent.num_timesteps += self.num_envs
             n_collected_steps += 1
@@ -348,7 +349,7 @@ class IndependentDQN(sb3_DQN):
             
             self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
             for agent in self.agents:
-                 agent._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
+                 agent._update_current_progress_remaining(agent.num_timesteps, self._total_timesteps)
             # For DQN, check if the target network should be updated
             # and update the exploration schedule
             # For SAC/TD3, the update is dones as the same time as the gradient update

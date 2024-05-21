@@ -8,6 +8,8 @@ import torch
 from nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from segment_sampling import sample_segment_from_path
 from utils import corrcoef
+from comparison_collectors import SyntheticComparisonCollector
+from segment_sampling import segments_from_rand_rollout
 
 
 def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape):
@@ -58,27 +60,43 @@ class RewardModel(object):
 class ComparisonRewardPredictor(RewardModel):
     """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
 
-    def __init__(self, env, summary_writer, comparison_collector, agent_logger, label_schedule, stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4):
-        self.env = env
+    def __init__(self, summary_writer, agent_logger, label_schedule, fps, observation_space, action_space,
+                 stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000):
+        """ Initialize the reward predictor
+        :param summary_writer: a tensorboardX summary writer
+        :param agent_logger: an AgentLogger object
+        :param label_schedule: a LabelSchedule object
+        :param fps: the frames per second of the environment
+        :param observation_space: the observation space of the environment
+        :param action_space: the action space of the environment
+        :param stacked_frames: the number of frames to stack
+        :param device: the device to run the model on
+        :param lr: the learning rate for the model
+        :param clip_length: the length of the video clip to use for training
+        :param train_freq: how often to train the model
+        :param comparison_collector_max_len: the maximum number of comparisons to store
+        """
         self.summary_writer = summary_writer
         self.agent_logger = agent_logger
-        self.comparison_collector = comparison_collector
         self.label_schedule = label_schedule
         self.stacked_frames = stacked_frames
         self.device = device
         
         # Set up some bookkeeping
         self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
-        self._frames_per_segment = clip_length * env.fps
+        self._frames_per_segment = clip_length * fps
         self._steps_since_last_training = 0
         self._n_timesteps_per_predictor_training = train_freq  # How often should we train our predictor?
         self._elapsed_predictor_training_iters = 0
 
+        # Build and initialize our comparison_collector
+        self.comparison_collector = SyntheticComparisonCollector(max_len=comparison_collector_max_len)
+        
         # Build and initialize our predictor model
  
-        self.obs_shape = (stacked_frames*env.observation_space.shape[0],) + env.observation_space.shape[1:]
-        self.discrete_action_space = hasattr(env.action_space, "shape")
-        self.act_shape = (env.action_space.n,) if self.discrete_action_space else env.action_space.shape
+        self.obs_shape = (stacked_frames*observation_space.shape[0],) + observation_space.shape[1:]
+        self.discrete_action_space = hasattr(action_space, "shape")
+        self.act_shape = (action_space.n,) if self.discrete_action_space else action_space.shape
         
         self.model = self._build_model()
         self.loss = torch.nn.CrossEntropyLoss()
@@ -153,6 +171,28 @@ class ComparisonRewardPredictor(RewardModel):
             self.train_predictor()
             self._steps_since_last_training = 0
 
+    def pre_trian(self, env_id, make_env, pretrain_labels, clip_length, workers, stacked_frames, n_steps, pretrain_iters):
+        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+        pretrain_segments = segments_from_rand_rollout(
+            env_id, make_env, n_desired_segments=pretrain_labels * 2,
+            clip_length_in_seconds=clip_length, workers=workers,
+            stacked_frames=stacked_frames, max_episode_steps=n_steps)
+        for i in range(pretrain_labels):  # Turn our random segments into comparisons
+            self.comparison_collector.add_segment_pair(pretrain_segments[i], pretrain_segments[i + pretrain_labels])
+
+        # Sleep until the human has labeled most of the pretraining comparisons
+        while len(self.comparison_collector.labeled_comparisons) < int(pretrain_labels * 0.75):
+            self.comparison_collector.label_unlabeled_comparisons()
+            print("%s synthetic labels generated... " % (len(self.comparison_collector.labeled_comparisons)))
+
+        # Start the actual training
+        losses = []
+        for i in range(pretrain_iters):
+            loss = self.train_predictor()  # Train on pretraining labels
+            losses.append(loss)
+            if i % 100 == 0:
+                print("%s/%s predictor pretraining iters... (Err: %s)" % (i, pretrain_iters, np.mean(losses)))
+                
     def train_predictor(self, verbose=False):
         self.comparison_collector.label_unlabeled_comparisons()
 
@@ -232,31 +272,45 @@ class ComparisonRewardPredictor(RewardModel):
     
     def buffer_usage(self):
         return self.comparison_collector.buffer_usage()
-    
 
-    class PRMComparisonRewardPredictor(RewardModel):
-        def __init__(self, env, summary_writer, comparison_collector, agent_logger, label_schedule, stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4):
-            self.env = env
-            self.summary_writer = summary_writer
-            self.agent_logger = agent_logger
-            self.comparison_collector = comparison_collector
-            self.label_schedule = label_schedule
-            self.stacked_frames = stacked_frames
-            self.device = device
-            
-            # Set up some bookkeeping
-            self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
-            self._frames_per_segment = clip_length * env.fps
-            self._steps_since_last_training = 0
-            self._n_timesteps_per_predictor_training = train_freq  # How often should we train our predictor?
-            self._elapsed_predictor_training_iters = 0
+class PrmComparisonRewardPredictor(RewardModel):
+    def __init__(self, num_agents, env, summary_writer, agent_logger, label_schedule,
+                 stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000):
+        
+        self.predictors = [ComparisonRewardPredictor(env=env,
+                                                     summary_writer=summary_writer,
+                                                     agent_logger=agent_logger,
+                                                     label_schedule=label_schedule,
+                                                     stacked_frames=stacked_frames,
+                                                     device=device, 
+                                                     lr=lr,
+                                                     clip_length=clip_length,
+                                                     train_freq=train_freq,
+                                                     comparison_collector_max_len=comparison_collector_max_len)
+                        for _ in range(num_agents)]
+        self.env = env
+        self.summary_writer = summary_writer
+        self.agent_logger = agent_logger
+        self.label_schedule = label_schedule
+        self.stacked_frames = stacked_frames
+        self.device = device
+        self.num_agents
+        # Set up some bookkeeping
+        self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
+        self._frames_per_segment = clip_length * env.fps
+        self._steps_since_last_training = 0
+        self._n_timesteps_per_predictor_training = train_freq  # How often should we train our predictor?
+        self._elapsed_predictor_training_iters = 0
 
-            # Build and initialize our predictor model
-
-            self.obs_shape = (stacked_frames*env.observation_space.shape[0],) + env.observation_space.shape[1:]
-            self.discrete_action_space = hasattr(env.action_space, "shape")
-            self.act_shape = (env.action_space.n,) if self.discrete_action_space else env.action_space.shape
-            
-            self.model = self._build_model()
-            self.loss = torch.nn.CrossEntropyLoss()
-            self.train_op = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)
+        # Build and initialize our comparison_collector
+        self.comparison_collector = [SyntheticComparisonCollector(max_len=comparison_collector_max_len) for _ in range(env.n_agents)]
+        
+        # Build and initialize our predictor model
+ 
+        self.obs_shape = (stacked_frames*env.observation_space.shape[0],) + env.observation_space.shape[1:]
+        self.discrete_action_space = hasattr(env.action_space, "shape")
+        self.act_shape = (env.action_space.n,) if self.discrete_action_space else env.action_space.shape
+        
+        self.model = self._build_model()
+        self.loss = torch.nn.CrossEntropyLoss()
+        self.train_op = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)

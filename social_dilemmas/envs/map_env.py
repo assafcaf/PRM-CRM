@@ -29,7 +29,7 @@ _MAP_ENV_ACTIONS = {
 
 ORIENTATIONS = {"LEFT": [0, -1], "RIGHT": [0, 1], "UP": [-1, 0], "DOWN": [1, 0]}
 
-OBSERVATION_DIM = 48
+OBSERVATION_DIM = 42
 
 DEFAULT_COLOURS = {
     b" ": np.array([0, 0, 0], dtype=np.uint8),  # Black background

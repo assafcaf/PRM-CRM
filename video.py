@@ -34,6 +34,9 @@ class SegmentVideoRecorder(object):
     def predict(self, obs, actions):
         return self.predictor.predict(obs, actions)
     
+    def buffer_usage(self):
+        return self.predictor.buffer_usage()
+
 def write_segment_to_video(segment, fname, env):
     os.makedirs(osp.dirname(fname), exist_ok=True)
     frames = [x for x in segment["human_obs"]]

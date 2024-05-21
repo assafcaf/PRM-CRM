@@ -56,8 +56,9 @@ def arg_pars():
     return args
 
 def main():
-
-
+    print("Setting things up...")
+    
+    # Parse arguments
     args = arg_pars()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.num_gpu
     pre_trian = True
@@ -66,33 +67,26 @@ def main():
         if not args.real_rewards:
             args.workers = 3
         
-
-    print("Setting things up...")
-
+    # Set up the run name and save directory 
     args.name = args.name.format(args.n_labels, metrics[args.metric])
-
     env_id = args.env_id
-    
     run_name = "%s%s/%s-%s" % (env_id,
                                f"{'-independent' if args.independent else ''}{'-RealRewards' if args.real_rewards else ''}",
                                args.name, int(time()))
-    #save_dir = os.path.join(*__file__.split(os.sep)[4:-1], 'results')
     save_dir = fr'/home/acaftory/CommonsGame/my-atari-teacher-MultiAgent3/results/{args.agent}'
 
-    sb3_logger = configure(osp.join(save_dir, run_name), ["stdout", "tensorboard"])
 
-
+    # Set up the environment
     env = make_env(env_id, max_episode_steps=args.n_steps, same_color=args.same_color, gray_scale=args.gray_scale)
 
-    num_timesteps = int(args.num_timesteps)
-    experiment_name = slugify(args.name)
+    # Set up the logger
+    sb3_logger = configure(osp.join(save_dir, run_name), ["stdout", "tensorboard"])
+    agent_logger = AgentLoggerSb3(sb3_logger)
 
 
-    # TODO: handle sb3_logger
-    agent_logger = AgentLoggerSb3(sb3_logger) # sb3_logger
-
+    # Set up the label schedule
     pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
-
+    num_timesteps = int(args.num_timesteps)
     if args.n_labels:
         label_schedule = LabelAnnealer(
             agent_logger=agent_logger,
@@ -103,62 +97,29 @@ def main():
         print("No label limit given. We will request one label every few seconds.")
         label_schedule = ConstantLabelSchedule(pretrain_labels=pretrain_labels)
 
-    if args.predictor == "synth":
-        comparison_collector = SyntheticComparisonCollector(max_len = int(args.n_labels * args.buffer_ratio))
-
-    elif args.predictor == "human":
-        bucket = os.environ.get('RL_TEACHER_GCS_BUCKET')
-        assert bucket and bucket.startswith("gs://"), "env variable RL_TEACHER_GCS_BUCKET must start with gs://"
-        comparison_collector = HumanComparisonCollector(env_id, experiment_name=experiment_name)
-    else:
-        raise ValueError("Bad value for --predictor: %s" % args.predictor)
-
+    # Set up the reward predictor
     predictor = ComparisonRewardPredictor(
         env,
-        sb3_logger, # TODO: change to sb3_logger when have it ###################################### used to be None ##############################################
-        comparison_collector=comparison_collector,
+        sb3_logger, 
         agent_logger=agent_logger,
         clip_length=CLIP_LENGTH,
         label_schedule=label_schedule,
         stacked_frames=args.stacked_frames,
         train_freq=args.train_freq,
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        comparison_collector_max_len = int(args.n_labels * args.buffer_ratio)
     )
     if pre_trian:
-        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-        pretrain_segments = segments_from_rand_rollout(
-            env_id, make_env, n_desired_segments=pretrain_labels * 2,
-            clip_length_in_seconds=CLIP_LENGTH, workers=args.workers,
-            stacked_frames=args.stacked_frames, max_episode_steps=args.n_steps)
-        for i in range(pretrain_labels):  # Turn our random segments into comparisons
-            comparison_collector.add_segment_pair(pretrain_segments[i], pretrain_segments[i + pretrain_labels])
+        predictor.pre_trian(env_id, make_env, pretrain_labels, CLIP_LENGTH,
+                            args.workers, args.stacked_frames, args.n_steps, args.pretrain_iters)
 
-        # Sleep until the human has labeled most of the pretraining comparisons
-        while len(comparison_collector.labeled_comparisons) < int(pretrain_labels * 0.75):
-            comparison_collector.label_unlabeled_comparisons()
-            if args.predictor == "synth":
-                print("%s synthetic labels generated... " % (len(comparison_collector.labeled_comparisons)))
-            elif args.predictor == "human":
-                print("%s/%s comparisons labeled. Please add labels w/ the human-feedback-api. Sleeping... " % (
-                    len(comparison_collector.labeled_comparisons), pretrain_labels))
-                sleep(5)
-
-        # Start the actual training
-        losses = []
-        for i in range(args.pretrain_iters):
-            loss = predictor.train_predictor()  # Train on pretraining labels
-            losses.append(loss)
-            if i % 100 == 0:
-                print("%s/%s predictor pretraining iters... (Err: %s)" % (i, args.pretrain_iters, np.mean(losses)))
-
-        # Wrap the predictor to capture videos every so often:
-        if not args.no_videos:
-            predictor = SegmentVideoRecorder(predictor, env, save_dir=osp.join(save_dir, run_name))
+    # Wrap the predictor to capture videos every so often:
+    if not args.no_videos:
+        predictor = SegmentVideoRecorder(predictor, env, save_dir=osp.join(save_dir, run_name))
         
     
 
-        # build env
-
+    # build env
     if env_id not in ['harvest']:
         vec_env = make_atari_env(env_id, n_envs=args.workers)
         vec_env = VecFrameStack(vec_env, n_stack=args.stacked_frames)
@@ -198,9 +159,9 @@ def main():
                           'gamma': 0.99,
                           'train_freq': 4,
                           'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-                          'exploration_fraction': 0.1,
-                          'buffer_size': int(1e5),
-                          'learning_starts': 10000}
+                          'exploration_fraction': 0.3,
+                          'learning_starts': 1e5,
+                          'buffer_size': int(1e6)}
         # train_dqn(
         #     vec_env=vec_env,
         #     predictor=predictor,
@@ -211,7 +172,7 @@ def main():
         #     use_independent_policy=args.independent_policy
         # )
         if args.independent:
-            agent = IndependentDQN(policy="CnnPolicy",
+            agent = IndependentDQN(policy="MlpPolicy",
                                    env=vec_env,
                                    num_agents=args.n_agents,
                                    verbose=1,
@@ -225,7 +186,7 @@ def main():
                           predictor=predictor,
                           **learner_kwargs)
         agent.set_logger(sb3_logger)
-        agent.learn(int(2e8), log_interval=1)
+        agent.learn(int(1e8), log_interval=1)
 
 
 if __name__ == '__main__':
