@@ -33,7 +33,8 @@ class HarvestEnv(MapEnv):
         ep_length=1000,
         metric=0,
         same_color=False,
-        gray_scale=False
+        gray_scale=False,
+        same_dim=same_dim
     ):
         super().__init__(
             ascii_map,

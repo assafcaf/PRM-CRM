@@ -16,7 +16,7 @@ from stable_baselines3.common.vec_env import (
     unwrap_vec_normalize,
 )
 
-def make_env(env_id, max_episode_steps=500, gray_scale=False, same_color=False):
+def make_env(env_id, max_episode_steps=500, gray_scale=False, same_color=False, same_dim=False):
     original_name = env_id
     short = False
     if '-v' in env_id:
@@ -25,7 +25,8 @@ def make_env(env_id, max_episode_steps=500, gray_scale=False, same_color=False):
         env_id = env_id[len('short'):]
         short = True
     # Use our task_by_name function to get the env
-    return task_by_name(env_id, original_name, short, max_episode_steps=max_episode_steps, same_color=same_color, gray_scale=gray_scale)
+    return task_by_name(env_id, original_name, short, max_episode_steps=max_episode_steps,
+                        same_color=same_color, gray_scale=gray_scale, same_dim=same_dim)
 
 def make_env_learner(env_id, stacked_frames, n_envs=1):
     original_name = env_id
@@ -58,7 +59,7 @@ def task_by_name(name, original_name=None, short=False, max_episode_steps=500, s
     elif name in ["doublependulum"]:
         return double_pendulum()
     elif name in ["harvest"]:
-        return harvest(max_episode_steps, same_color=same_color, gray_scale=gray_scale)
+        return harvest(max_episode_steps, same_color=same_color, gray_scale=gray_scale, same_dim=same_dim)
     else:
         try:
             # If an original_name is provided, try to make an environment from that.
@@ -349,7 +350,7 @@ def walker(short=False):
     env = limit(env, 300 if short else 1000)
     return env
 
-def harvest(max_episode_steps, same_color, gray_scale):
+def harvest(max_episode_steps, same_color, gray_scale, same_dim):
     env = build_env(rollout_len=max_episode_steps, num_agents=1, num_cpus=1, num_frames=1,
-                    num_envs=1, metric=0, same_color=same_color, gray_scale=gray_scale)
+                    num_envs=1, metric=0, same_color=same_color, gray_scale=gray_scale, same_dim=same_dim)
     return env

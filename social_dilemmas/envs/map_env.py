@@ -61,16 +61,16 @@ SAME_COLOR_DEFAULT_COLOURS = {
     b"F": np.array([255, 255, 0], dtype=np.uint8),  # Yellow firing beam
     b"P": np.array([159, 67, 255], dtype=np.uint8),  # Generic agent (any player)
     b"S": np.array([255, 255, 255], dtype=np.uint8),  # White (self)
-    b"1": np.array([0, 0,255], dtype=np.uint8),      # indigo
-    b"2": np.array([0, 0,255], dtype=np.uint8),    # Sky blue
-    b"3": np.array([0, 0,255], dtype=np.uint8),   # Magenta
-    b"4": np.array([0, 0,255], dtype=np.uint8),   # Red
-    b"5": np.array([0, 0,255], dtype=np.uint8),   # Orange
-    b"6": np.array([0, 0,255], dtype=np.uint8), # Cyan
-    b"7": np.array([0, 0,255], dtype=np.uint8),   # Lavender
-    b"8": np.array([0, 0,255], dtype=np.uint8), # Pink
-    b"9": np.array([0, 0,255], dtype=np.uint8),  # Yellow
-    b"0": np.array([0, 0,255], dtype=np.uint8),  # LIGHT PINK
+    b"1": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"2": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"3": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"4": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"5": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"6": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"7": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"8": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"9": np.array([0, 0,255], dtype=np.uint8),      # red
+    b"0": np.array([0, 0,255], dtype=np.uint8),      # red
 }
 
 
@@ -104,7 +104,8 @@ class MapEnv(MultiAgentEnv):
         alpha=0.0,
         beta=0.0,
         same_color=False,
-        gray_scale=False
+        gray_scale=False,
+        same_dim=False
     ):
         """
 
@@ -133,7 +134,8 @@ class MapEnv(MultiAgentEnv):
         self.beta = beta
         self.all_actions = _MAP_ENV_ACTIONS.copy()
         self.all_actions.update(extra_actions)
-        
+        self.same_dim = same_dim
+        self.dim = OBSERVATION_DIM if same_dim else 2 * view_len + 1
         self.gray_scale = gray_scale
         # Map without agents or beams
         self.world_map = np.full(
@@ -171,7 +173,7 @@ class MapEnv(MultiAgentEnv):
                 low=0,
                 high=255,
                 # shape=(2 * self.view_len + 1, 2 * self.view_len + 1, 3),
-                shape=(OBSERVATION_DIM, OBSERVATION_DIM, 1 if self.gray_scale else 3),
+                shape=(self.dim, self.dim, 1 if self.gray_scale else 3),
                 dtype=np.uint8,
             )
         }
@@ -332,7 +334,7 @@ class MapEnv(MultiAgentEnv):
                 observations[agent.agent_id] = {"curr_obs": rgb_arr}
             rewards[agent.agent_id] = agent.compute_reward()
             dones[agent.agent_id] = agent.get_done() 
-            infos[agent.agent_id] = {'human_obs': resize(self.full_map_to_colors(), False, dsize=(OBSERVATION_DIM, OBSERVATION_DIM))}
+            infos[agent.agent_id] = {'human_obs': resize(self.full_map_to_colors(), False, dsize=(self.dim, self.dim))}
             
             
 
@@ -455,7 +457,7 @@ class MapEnv(MultiAgentEnv):
         ]
         if len(view_slice) == 0:
             rotated_view = np.zeros((2 * self.view_len + 1, 2 * self.view_len + 1, 3), dtype=int)
-            return resize(rotated_view, self.gray_scale, dsize=(OBSERVATION_DIM, OBSERVATION_DIM))
+            return resize(rotated_view, self.gray_scale, dsize=(self.dim, self.dim))
             
             
         if agent.orientation == "UP":
@@ -468,7 +470,7 @@ class MapEnv(MultiAgentEnv):
             rotated_view = np.rot90(view_slice, k=1, axes=(1, 0))
         # change middle pixel to be the "Self" color
         rotated_view[self.map_padding, self.map_padding, :] = self.color_map[b'S']
-        return np.expand_dims(resize(rotated_view, self.gray_scale, dsize=(OBSERVATION_DIM, OBSERVATION_DIM)), -1)
+        return np.expand_dims(resize(rotated_view, self.gray_scale, dsize=(self.dim, self.dim)), -1)
 
     def map_to_colors(self, mmap, color_map, rgb_arr, orientation="UP"):
         """Converts a map to an array of RGB values.

@@ -51,6 +51,7 @@ def arg_pars():
     parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
     parser.add_argument('-ן', '--independent', action="store_true", default=True)
     parser.add_argument('-r', '--real_rewards', action="store_true", default=True)
+    parser.add_argument('-d', '--same_dim', action="store_true", default=True)
     parser.add_argument('-m', '--metric', default=0, choices=[0, 1, 2], help="metric for RP to optimize. 0: efficiency , 1: efficiency * peace, 2: efficiency * peace * equality")
     args = parser.parse_args()
     return args
@@ -77,7 +78,7 @@ def main():
 
 
     # Set up the environment
-    env = make_env(env_id, max_episode_steps=args.n_steps, same_color=args.same_color, gray_scale=args.gray_scale)
+    env = make_env(env_id, max_episode_steps=args.n_steps, same_color=args.same_color, gray_scale=args.gray_scale, same_dim=args.same_dim)  
 
     # Set up the logger
     sb3_logger = configure(osp.join(save_dir, run_name), ["stdout", "tensorboard"])
@@ -160,7 +161,7 @@ def main():
                           'gamma': 0.99,
                           'train_freq': 4,
                           'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-                          'exploration_fraction': 0.2,
+                          'exploration_fraction': 0.1,
                           'learning_starts': 1e5,
                           'buffer_size': int(1e6)}
         # train_dqn(

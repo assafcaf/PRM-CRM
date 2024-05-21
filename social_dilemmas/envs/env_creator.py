@@ -9,7 +9,8 @@ def get_env_creator(
     ep_length=1000,
     metric=0,
     same_color=False,
-    gray_scale=False
+    gray_scale=False,
+    same_dim=same_dim
 ):
     if env == "harvest":
 
@@ -20,7 +21,8 @@ def get_env_creator(
                 ep_length=ep_length,
                 metric=metric,
                 same_color=same_color,
-                gray_scale=gray_scale
+                gray_scale=gray_scale,
+                same_dim=same_dim
             )
 
     elif env == "cleanup":

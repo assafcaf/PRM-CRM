@@ -6,7 +6,8 @@ from social_dilemmas.envs.wrappers import VecPrmEnv
 from gym.spaces import Box
 import numpy as np
 
-def build_env(rollout_len, num_agents, num_cpus, num_frames, num_envs, use_my_wrap=True, metric=0, same_color=False, gray_scale=False):
+def build_env(rollout_len, num_agents, num_cpus, num_frames, num_envs, use_my_wrap=True,
+              metric=0, same_color=False, gray_scale=False, same_dim=False):
     env = parallel_env(
         max_cycles=rollout_len,
         env='harvest',
@@ -14,7 +15,8 @@ def build_env(rollout_len, num_agents, num_cpus, num_frames, num_envs, use_my_wr
         ep_length=rollout_len,
         metric=metric,
         same_color=same_color,
-        gray_scale=gray_scale
+        gray_scale=gray_scale,
+        same_dim=same_dim
     )
 
     env = ss.observation_lambda_v0(env, lambda x, _: x["curr_obs"], lambda s: s["curr_obs"])
