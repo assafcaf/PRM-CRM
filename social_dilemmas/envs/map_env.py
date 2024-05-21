@@ -31,7 +31,7 @@ ORIENTATIONS = {"LEFT": [0, -1], "RIGHT": [0, 1], "UP": [-1, 0], "DOWN": [1, 0]}
 
 OBSERVATION_DIM = 42
 
-DEFAULT_COLOURS = {
+DIFFERENT_COLOR_DEFAULT_COLOURS = {
     b" ": np.array([0, 0, 0], dtype=np.uint8),  # Black background
     b"0": np.array([0, 0, 0], dtype=np.uint8),  # Black background beyond map walls
     b"": np.array([180, 180, 180], dtype=np.uint8),  # Grey board walls
@@ -40,41 +40,39 @@ DEFAULT_COLOURS = {
     b"F": np.array([255, 255, 0], dtype=np.uint8),  # Yellow firing beam
     b"P": np.array([159, 67, 255], dtype=np.uint8),  # Generic agent (any player)
     b"S": np.array([255, 255, 255], dtype=np.uint8),  # White (self)
-    
-    # Colours for agents. R value is a unique identifier
-    b"1": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"2": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"3": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"4": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"5": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"6": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"7": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"8": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    b"9": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
-    
-    b"a": np.array([75,0,130], dtype=np.uint8),      # indigo
-    b"b": np.array([2, 81, 154], dtype=np.uint8),    # Sky blue
-    b"c": np.array([204, 0, 204], dtype=np.uint8),   # Magenta
-    b"d": np.array([216, 30, 54], dtype=np.uint8),   # Red
-    b"e": np.array([254, 151, 0], dtype=np.uint8),   # Orange
-    b"f": np.array([100, 255, 255], dtype=np.uint8), # Cyan
-    b"g": np.array([99, 99, 255], dtype=np.uint8),   # Lavender
-    b"h": np.array([250, 204, 255], dtype=np.uint8), # Pink
-    b"i": np.array([238, 223, 16], dtype=np.uint8),  # Yellow
-    b"j": np.array([255, 204, 255], dtype=np.uint8),  # LIGHT PINK
-    
-    b"k": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"l": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"m": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"n": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"o": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"p": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"q": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"r": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    b"s": np.array([255, 255, 255], dtype=np.uint8),  # Pure red
-    
-    
+    b"1": np.array([75,0,130], dtype=np.uint8),      # indigo
+    b"2": np.array([2, 81, 154], dtype=np.uint8),    # Sky blue
+    b"3": np.array([204, 0, 204], dtype=np.uint8),   # Magenta
+    b"4": np.array([216, 30, 54], dtype=np.uint8),   # Red
+    b"5": np.array([254, 151, 0], dtype=np.uint8),   # Orange
+    b"6": np.array([100, 255, 255], dtype=np.uint8), # Cyan
+    b"7": np.array([99, 99, 255], dtype=np.uint8),   # Lavender
+    b"8": np.array([250, 204, 255], dtype=np.uint8), # Pink
+    b"9": np.array([238, 223, 16], dtype=np.uint8),  # Yellow
+    b"0": np.array([255, 204, 255], dtype=np.uint8),  # LIGHT PINK
 }
+
+SAME_COLOR_DEFAULT_COLOURS = {
+    b" ": np.array([0, 0, 0], dtype=np.uint8),  # Black background
+    b"0": np.array([0, 0, 0], dtype=np.uint8),  # Black background beyond map walls
+    b"": np.array([180, 180, 180], dtype=np.uint8),  # Grey board walls
+    b"@": np.array([180, 180, 180], dtype=np.uint8),  # Grey board walls
+    b"A": np.array([0, 255, 0], dtype=np.uint8),  # Green apples
+    b"F": np.array([255, 255, 0], dtype=np.uint8),  # Yellow firing beam
+    b"P": np.array([159, 67, 255], dtype=np.uint8),  # Generic agent (any player)
+    b"S": np.array([255, 255, 255], dtype=np.uint8),  # White (self)
+    b"1": np.array([0, 0,255], dtype=np.uint8),      # indigo
+    b"2": np.array([0, 0,255], dtype=np.uint8),    # Sky blue
+    b"3": np.array([0, 0,255], dtype=np.uint8),   # Magenta
+    b"4": np.array([0, 0,255], dtype=np.uint8),   # Red
+    b"5": np.array([0, 0,255], dtype=np.uint8),   # Orange
+    b"6": np.array([0, 0,255], dtype=np.uint8), # Cyan
+    b"7": np.array([0, 0,255], dtype=np.uint8),   # Lavender
+    b"8": np.array([0, 0,255], dtype=np.uint8), # Pink
+    b"9": np.array([0, 0,255], dtype=np.uint8),  # Yellow
+    b"0": np.array([0, 0,255], dtype=np.uint8),  # LIGHT PINK
+}
+
 
 # the axes look like this when printed out
 # WARNING: increasing array position in the direction of down
@@ -137,13 +135,12 @@ class MapEnv(MultiAgentEnv):
         self.all_actions.update(extra_actions)
         
         self.gray_scale = gray_scale
-        self.ord = ord('k' if same_color else 'a') #contrill the color of the agent's obervation in the map same color or different color 
         # Map without agents or beams
         self.world_map = np.full(
             (len(self.base_map), len(self.base_map[0])), fill_value=b" ", dtype="c"
         )
         # Color mapping
-        self.color_map = color_map if color_map is not None else DEFAULT_COLOURS.copy()
+        self.color_map = SAME_COLOR_DEFAULT_COLOURS.copy() if same_color else DIFFERENT_COLOR_DEFAULT_COLOURS.copy()
         # World map image
         self.world_map_color = np.full(
             (len(self.base_map) + view_len * 2, len(self.base_map[0]) + view_len * 2, 3),
@@ -470,7 +467,7 @@ class MapEnv(MultiAgentEnv):
         elif agent.orientation == "RIGHT":
             rotated_view = np.rot90(view_slice, k=1, axes=(1, 0))
         # change middle pixel to be the "Self" color
-        rotated_view[self.map_padding, self.map_padding, :] = self.color_map[chr(self.ord + self.agent_id_to_int(agent)).encode('utf-8')]
+        rotated_view[self.map_padding, self.map_padding, :] = self.color_map[b'S']
         return np.expand_dims(resize(rotated_view, self.gray_scale, dsize=(OBSERVATION_DIM, OBSERVATION_DIM)), -1)
 
     def map_to_colors(self, mmap, color_map, rgb_arr, orientation="UP"):
