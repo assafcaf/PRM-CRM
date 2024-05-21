@@ -240,7 +240,7 @@ class IndependentDQN(sb3_DQN):
         
         self.logger.record("usage/memory", psutil.virtual_memory().percent)
         self.logger.record("usage/cpu", psutil.cpu_percent())
-        self.logger.record("usage/dqn_buffer", self.agents[0].replay_buffer.size())
+        self.logger.record("usage/dqn_buffer", self.agents[0].replay_buffer.size() * self.num_envs)
         self.logger.record("usage/dqn_buffer_percentage", self.agents[0].replay_buffer.size() / self.agents[0].buffer_size * self.num_envs)
         self.logger.record("usage/predictor_buffer", self.predictor.buffer_usage())
         
@@ -379,8 +379,9 @@ class IndependentDQN(sb3_DQN):
                 if log_interval is not None and self._episode_num % log_interval == 0:
                     self._dump_logs()
                 if not self.real_rewards:
-                    for path in self.predictor_beffer.get():
-                        self.predictor.path_callback(path)
+                    for i, path in enumerate(self.predictor_beffer.get()):
+                        agent_id = i % self.num_agents # indicate which agent the path belongs to
+                        self.predictor.path_callback(path, agent_id) 
 
         callback.on_rollout_end()
 

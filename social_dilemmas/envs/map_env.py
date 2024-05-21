@@ -40,6 +40,7 @@ DEFAULT_COLOURS = {
     b"F": np.array([255, 255, 0], dtype=np.uint8),  # Yellow firing beam
     b"P": np.array([159, 67, 255], dtype=np.uint8),  # Generic agent (any player)
     b"S": np.array([255, 255, 255], dtype=np.uint8),  # White (self)
+    
     # Colours for agents. R value is a unique identifier
     b"1": np.array([0, 0, 255], dtype=np.uint8),  # Pure red
     b"2": np.array([0, 0, 255], dtype=np.uint8),  # Pure red

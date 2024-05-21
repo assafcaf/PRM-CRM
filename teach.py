@@ -99,19 +99,20 @@ def main():
 
     # Set up the reward predictor
     predictor = ComparisonRewardPredictor(
-        env,
         sb3_logger, 
         agent_logger=agent_logger,
         clip_length=CLIP_LENGTH,
         label_schedule=label_schedule,
+        fps=env.fps,
+        observation_space=env.observation_space,
+        action_space=env.action_space,
         stacked_frames=args.stacked_frames,
         train_freq=args.train_freq,
         device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
         comparison_collector_max_len = int(args.n_labels * args.buffer_ratio)
     )
     if pre_trian:
-        predictor.pre_trian(env_id, make_env, pretrain_labels, CLIP_LENGTH,
-                            args.workers, args.stacked_frames, args.n_steps, args.pretrain_iters)
+        predictor.pre_trian(env_id, make_env, pretrain_labels, CLIP_LENGTH, args.workers, args.n_steps, args.pretrain_iters)
 
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
@@ -139,7 +140,7 @@ def main():
                     'n_epochs': 4,
                     'gae_lambda': 0.95,
                     'gamma': 0.95,
-                    'target_kl': 0.2,
+                    'target_kl': 0.1,
                     'max_grad_norm': 40}
         train_ppo(
             vec_env=vec_env,
@@ -159,7 +160,7 @@ def main():
                           'gamma': 0.99,
                           'train_freq': 4,
                           'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-                          'exploration_fraction': 0.3,
+                          'exploration_fraction': 0.2,
                           'learning_starts': 1e5,
                           'buffer_size': int(1e6)}
         # train_dqn(

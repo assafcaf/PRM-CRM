@@ -2,12 +2,15 @@ import multiprocessing
 import os
 import os.path as osp
 import uuid
-
 import numpy as np
-
 from envs import make_env
 from video import write_segment_to_video, upload_to_gcs
 from collections import deque
+
+def _write_and_upload_video(env_id, gcs_path, local_path, segment):
+    env = make_env(env_id)
+    write_segment_to_video(segment, fname=local_path, env=env)
+    upload_to_gcs(local_path, gcs_path)
 
 class SyntheticComparisonCollector(object):
     def __init__(self, max_len=1000):
@@ -54,10 +57,11 @@ class SyntheticComparisonCollector(object):
         # Mutate the comparison and give it the new label
         comparison['label'] = 0 if left_has_more_rew else 1
 
-def _write_and_upload_video(env_id, gcs_path, local_path, segment):
-    env = make_env(env_id)
-    write_segment_to_video(segment, fname=local_path, env=env)
-    upload_to_gcs(local_path, gcs_path)
+    def copy(self):
+        new_collector = SyntheticComparisonCollector(max_len=self.max_len)
+        new_collector._comparisons = deque(self._comparisons)
+        return new_collector
+
 
 class HumanComparisonCollector():
     def __init__(self, env_id, experiment_name):
