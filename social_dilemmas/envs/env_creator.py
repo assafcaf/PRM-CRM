@@ -10,7 +10,7 @@ def get_env_creator(
     metric=0,
     same_color=False,
     gray_scale=False,
-    same_dim=same_dim
+    same_dim=False
 ):
     if env == "harvest":
 

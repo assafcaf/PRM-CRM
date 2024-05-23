@@ -34,7 +34,7 @@ class HarvestEnv(MapEnv):
         metric=0,
         same_color=False,
         gray_scale=False,
-        same_dim=same_dim
+        same_dim=False
     ):
         super().__init__(
             ascii_map,
@@ -47,7 +47,8 @@ class HarvestEnv(MapEnv):
             alpha=alpha,
             beta=beta,
             same_color=same_color,
-            gray_scale=gray_scale
+            gray_scale=gray_scale,
+            same_dim=same_dim
         )
         self.apple_points = []
         for row in range(self.base_map.shape[0]):

@@ -334,7 +334,7 @@ class SingleDQNAgentCallback(BaseCallback):
 
     :param verbose: (int) Verbosity level 0: not output 1: info 2: debug
     """
-    def __init__(self, eval_env, verbose=0, render_frequency=10, deterministic=False, video_resolution=(720, 480)):
+    def __init__(self, eval_env, verbose=0, render_frequency=10, deterministic=False, args={}, video_resolution=(720, 480)):
         super(SingleDQNAgentCallback, self).__init__(verbose)
         # Those variables will be accessible in the callback
         # (they are defined in the base class)
@@ -358,6 +358,7 @@ class SingleDQNAgentCallback(BaseCallback):
         self.eval_env = eval_env
         self.deterministic = deterministic
         self.video_resolution = video_resolution
+        self.args = args
     def _on_training_start(self) -> None:
         file_name = os.path.join(self.model.logger.dir, "parameters.json")
 
@@ -373,7 +374,8 @@ class SingleDQNAgentCallback(BaseCallback):
                   "n_frames": self.model.env.observation_space.shape[0],
                   "policy_kwargs": self.model.policy.features_extractor_kwargs,
                   "policy_type": str(type(self.model.policy.features_extractor)).split(".")[-1],
-                  "observations_space": str(self.model.observation_space)}
+                  "observations_space": str(self.model.observation_space),
+                  'args': self.args}
 
         json_object = json.dumps(params, indent=4)
         with open(file_name, "w") as outfile:
@@ -409,7 +411,7 @@ class SingleDQNAgentCallback(BaseCallback):
             obs, reward, done, info = self.eval_env.step(actions.astype(np.uint8))
             rewards.append(reward)
             if render:
-                frame = self.eval_env.venv.venv.vec_envs[0].par_env.env.aec_env.env.env.env.ssd_env.render(mode="RGB")
+                frame = self.eval_env.venv.venv.venv.vec_envs[0].par_env.env.aec_env.env.env.env.ssd_env.render(mode="RGB")
                 # frames.append(im.fromarray(frame.astype(np.uint8)).resize(size=(720, 480), resample=im.BOX).convert("RGB"))
                 frames.append(cv2.resize(frame, self.video_resolution, interpolation=cv2.INTER_NEAREST))
         return np.array(rewards).sum(), frames

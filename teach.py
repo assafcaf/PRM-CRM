@@ -21,7 +21,7 @@ import warnings
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
 from social_dilemmas.harvest_env import build_env
-
+from social_dilemmas.callbacks.src import SingleDQNAgentCallback
 warnings.filterwarnings('ignore')
 CLIP_LENGTH = 1
 metrics = {0: "Efficiency",
@@ -51,7 +51,7 @@ def arg_pars():
     parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
     parser.add_argument('-ן', '--independent', action="store_true", default=True)
     parser.add_argument('-r', '--real_rewards', action="store_true", default=True)
-    parser.add_argument('-d', '--same_dim', action="store_true", default=True)
+    parser.add_argument('-sd', '--same_dim', action="store_true", default=False)
     parser.add_argument('-m', '--metric', default=0, choices=[0, 1, 2], help="metric for RP to optimize. 0: efficiency , 1: efficiency * peace, 2: efficiency * peace * equality")
     args = parser.parse_args()
     return args
@@ -174,21 +174,29 @@ def main():
         #     use_independent_policy=args.independent_policy
         # )
         if args.independent:
-            agent = IndependentDQN(policy="MlpPolicy",
+            agent = IndependentDQN(policy="CnnPolicy",
                                    env=vec_env,
-                                   num_agents=args.n_agents,
+                                   num_agents=1,
                                    verbose=1,
                                    predictor=predictor,
                                    real_rewards=args.real_rewards,
                                    **learner_kwargs)
         else:
             agent = DQNRP(policy="CnnPolicy",
+                          real_rewards=args.real_rewards,
                           env=vec_env,
                           verbose=1,
                           predictor=predictor,
                           **learner_kwargs)
         agent.set_logger(sb3_logger)
-        agent.learn(int(1e8), log_interval=1)
+        print("build eval env")
+        eval_env = build_env(rollout_len=args.n_steps, num_agents=args.n_agents, num_cpus=1, same_color=args.same_color, 
+                            gray_scale=args.gray_scale, num_frames=args.stacked_frames, num_envs=1, use_my_wrap=False, metric=args.metric)
+        
+        callback = SingleDQNAgentCallback(eval_env, verbose=0, render_frequency=10000, deterministic=False, args=vars(args))
+        agent.learn(int(1e8), log_interval=1, callback=callback)
+        print("Training Finished")
+        exit()
 
 
 if __name__ == '__main__':

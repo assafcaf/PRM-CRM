@@ -19,6 +19,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
+import psutil 
 
 from agents.dqn2.buffer import PredictorBuffer
 class DQN(sb3_DQN):
@@ -158,6 +159,7 @@ class DQNRP(sb3_DQN):
                  predictor,
                  policy: Union[str, Type[DQNPolicy]],
                  env: Union[GymEnv, str],
+                 real_rewards=True,
                  learning_rate: Union[float, Schedule] = 1e-4,
                  buffer_size: int = 1_000_000,  # 1e6
                  learning_starts: int = 50000,
@@ -207,6 +209,7 @@ class DQNRP(sb3_DQN):
                          seed=seed,
                          device=device,
                          _init_setup_model=_init_setup_model)
+        self.real_rewards = real_rewards
         self.predictor = predictor
         self.predictor_beffer =  PredictorBuffer(self.env.num_envs)
 
@@ -291,13 +294,16 @@ class DQNRP(sb3_DQN):
             new_obs, real_rewards, dones, infos = env.step(actions)
             
             # reward predictor
-            pred_rewards = self.predictor.predict(obs_as_tensor(self._last_obs, self.policy.device),
-                                                  th.tensor(actions).to(self.policy.device))
-            try:
-                human_obs = self.env.get_images()
-            except AttributeError:
-                human_obs = [info["human_obs"] for info in infos]
-            self.predictor_beffer.store(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
+            if not self.real_rewards:
+                pred_rewards = self.predictor.predict(obs_as_tensor(self._last_obs, self.policy.device),
+                                                    th.tensor(actions).to(self.policy.device))
+                try:
+                    human_obs = self.env.get_images()
+                except AttributeError:
+                    human_obs = [info["human_obs"] for info in infos]
+                self.predictor_beffer.store(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
+            else: pred_rewards = real_rewards
+            
             
             self.num_timesteps += env.num_envs
             num_collected_steps += 1
@@ -337,9 +343,9 @@ class DQNRP(sb3_DQN):
                         self._dump_logs()
                     
             # train reward_predictor
-            if dones.all():
-                for path in self.predictor_beffer.get():
-                    self.predictor.path_callback(path)
+            if dones.all() and not self.real_rewards:
+                    for path in self.predictor_beffer.get():
+                        self.predictor.path_callback(path, 0)
 
         callback.on_rollout_end()
 
@@ -370,4 +376,9 @@ class DQNRP(sb3_DQN):
         if len(self.ep_success_buffer) > 0:
             self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
         # Pass the number of timesteps for tensorboard
+        
+        self.logger.record("usage/memory", psutil.virtual_memory().percent)
+        self.logger.record("usage/cpu", psutil.cpu_percent())
+        self.logger.record("usage/dqn_buffer", self.replay_buffer.size())
+        self.logger.record("usage/predictor_buffer", self.predictor.buffer_usage())
         self.logger.dump(step=self.num_timesteps)

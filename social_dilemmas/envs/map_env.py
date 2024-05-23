@@ -135,7 +135,7 @@ class MapEnv(MultiAgentEnv):
         self.all_actions = _MAP_ENV_ACTIONS.copy()
         self.all_actions.update(extra_actions)
         self.same_dim = same_dim
-        self.dim = OBSERVATION_DIM if same_dim else 2 * view_len + 1
+        self.dim = 2 * view_len + 1 if same_dim else OBSERVATION_DIM
         self.gray_scale = gray_scale
         # Map without agents or beams
         self.world_map = np.full(
@@ -470,7 +470,7 @@ class MapEnv(MultiAgentEnv):
             rotated_view = np.rot90(view_slice, k=1, axes=(1, 0))
         # change middle pixel to be the "Self" color
         rotated_view[self.map_padding, self.map_padding, :] = self.color_map[b'S']
-        return np.expand_dims(resize(rotated_view, self.gray_scale, dsize=(self.dim, self.dim)), -1)
+        return resize(rotated_view, self.gray_scale, dsize=(self.dim, self.dim))
 
     def map_to_colors(self, mmap, color_map, rgb_arr, orientation="UP"):
         """Converts a map to an array of RGB values.

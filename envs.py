@@ -39,7 +39,8 @@ def make_env_learner(env_id, stacked_frames, n_envs=1):
     env = task_by_name(env_id, original_name, short)
     return ObservationStack(env, stacked_frames, n_envs)
 
-def task_by_name(name, original_name=None, short=False, max_episode_steps=500, same_color=False, gray_scale=False):
+def task_by_name(name, original_name=None, short=False, max_episode_steps=500,
+                 same_color=False, gray_scale=False, same_dim=False):
     if name == "reacher":
         return reacher(short=short)
     elif name == "humanoid":

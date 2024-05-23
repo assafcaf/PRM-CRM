@@ -17,7 +17,7 @@ class SegmentVideoRecorder(object):
         self._num_paths_seen = 0  # Internal counter of how many paths we've seen
         self._counter = 0  # Internal counter of how many videos we've saved at a given iteration.
 
-    def path_callback(self, path):
+    def path_callback(self, path, agent_id):
         if self._num_paths_seen % self.checkpoint_interval == 0:  # and self._num_paths_seen != 0:
             fname = '%s/run_%s_%s_%s.mp4' % (self.save_dir, self._num_paths_seen, self._counter, sum(path["rewards"]))
             print("Saving video of run %s_%s to %s" % (self._num_paths_seen, self._counter, fname))
