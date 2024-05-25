@@ -332,7 +332,7 @@ class IndependentDQN(sb3_DQN):
             
             self.num_timesteps += env.num_envs
             for agent in self.agents:
-                 agent.num_timesteps += self.num_envs
+                 agent.num_timesteps += env.num_envs
             n_collected_steps += 1
 
             # Give access to local variables
@@ -445,3 +445,13 @@ class IndependentDQN(sb3_DQN):
     def set_loggers(self, logger):
         for agent in self.agents:
             agent.set_logger(logger)
+    
+    def predict(self, observation, state=None, episode_start=None, deterministic=False):
+        actions = np.zeros((self.num_envs*self.num_agents))
+        for i, agent in enumerate(self.agents):
+            ac, _ = agent.predict(observation[i::self.num_agents],
+                                                        state,
+                                                        episode_start,
+                                                        deterministic)
+            actions[i::self.num_agents] = ac
+        return actions, None

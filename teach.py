@@ -47,11 +47,11 @@ def arg_pars():
     parser.add_argument('-ng', '--num_gpu', default="1", type=str, help="gpu id")
     parser.add_argument('-br', '--buffer_ratio', default=0.1, type=float, help='ratio of buffer size to number of labels (to reduce memory usage)')
     parser.add_argument('-d', '--debug', action="store_true", default=True)
-    parser.add_argument('-c', '--same_color', action="store_true", default=True)
+    parser.add_argument('-c', '--same_color', action="store_true", default=False)
     parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
     parser.add_argument('-ן', '--independent', action="store_true", default=True)
     parser.add_argument('-r', '--real_rewards', action="store_true", default=True)
-    parser.add_argument('-sd', '--same_dim', action="store_true", default=False)
+    parser.add_argument('-sd', '--same_dim', action="store_true", default=True)
     parser.add_argument('-m', '--metric', default=0, choices=[0, 1, 2], help="metric for RP to optimize. 0: efficiency , 1: efficiency * peace, 2: efficiency * peace * equality")
     args = parser.parse_args()
     return args
@@ -157,7 +157,7 @@ def main():
         learner_kwargs = {
                           'learning_rate': 0.0005,
                           'batch_size': 32,
-                          'tau': 0.005,
+                          'tau': 0.02,
                           'gamma': 0.99,
                           'train_freq': 4,
                           'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
@@ -176,7 +176,7 @@ def main():
         if args.independent:
             agent = IndependentDQN(policy="CnnPolicy",
                                    env=vec_env,
-                                   num_agents=1,
+                                   num_agents=args.n_agents,
                                    verbose=1,
                                    predictor=predictor,
                                    real_rewards=args.real_rewards,
