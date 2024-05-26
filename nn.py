@@ -7,7 +7,7 @@ import numpy as np
 class FullyConnectedMLP(nn.Module):
     """Vanilla two hidden layer multi-layer perceptron"""
 
-    def __init__(self, obs_shape, h_size=64, emb_dim=32, n_actions=2):
+    def __init__(self, obs_shape, h_size=64, emb_dim=32, n_actions=2, num_outputs=1):
         super(FullyConnectedMLP, self).__init__()
         input_dim = np.prod(obs_shape)
         self.double()
@@ -15,7 +15,7 @@ class FullyConnectedMLP(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(input_dim+emb_dim, h_size),
             nn.LeakyReLU(),
-            nn.Linear(h_size, 1),
+            nn.Linear(h_size, num_outputs),
             nn.Tanh()
         )
 
@@ -24,6 +24,7 @@ class FullyConnectedMLP(nn.Module):
         emb = self.embed(act.long())
         x = torch.cat([flat_obs, emb], axis=1)
         return self.mlp(x)
+    
 
 class SimpleConvolveObservationQNet(FullyConnectedMLP):
     """
@@ -31,12 +32,12 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
     concatinating the action and being an MLP.
     """
 
-    def __init__(self, obs_shape, h_size=64, emb_dim=32, n_actions=2):
+    def __init__(self, obs_shape, h_size=64, emb_dim=32, n_actions=2, num_outputs=1):
         after_convolve_shape = (
             int(ceil((ceil(obs_shape[1] - 6) / 3-4) / 2) -2 -2),
             int(ceil((ceil(obs_shape[2] - 6) / 3-4) / 2) -2 -2),
             16)
-        super().__init__(after_convolve_shape, h_size, emb_dim, n_actions)
+        super().__init__(after_convolve_shape, h_size, emb_dim, n_actions, num_outputs)
         #  original network
         # self.back_bone = nn.Sequential(
         #     nn.Conv2d(4, 16, kernel_size=7, stride=3),

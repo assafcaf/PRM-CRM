@@ -172,7 +172,6 @@ class MapEnv(MultiAgentEnv):
             "curr_obs": Box(
                 low=0,
                 high=255,
-                # shape=(2 * self.view_len + 1, 2 * self.view_len + 1, 3),
                 shape=(self.dim, self.dim, 1 if self.gray_scale else 3),
                 dtype=np.uint8,
             )

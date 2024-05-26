@@ -33,23 +33,23 @@ def arg_pars():
     parser.add_argument('-e', '--env_id', default='harvest', type=str)  # 'PongNoFrameskip-v4'
     parser.add_argument('-p', '--predictor', default="synth", type=str)
     parser.add_argument('-n', '--name', default='syn-{}_metric-{}', type=str)
-    parser.add_argument('-w', '--workers', default=8, type=int)
+    parser.add_argument('-w', '--workers', default=16, type=int)
     parser.add_argument('-l', '--n_labels', default=int(1e4), type=int)
     parser.add_argument('-L', '--pretrain_labels', default=50, type=int)
     parser.add_argument('-t', '--num_timesteps', default=5e7, type=int)
     parser.add_argument('-a', '--agent', default="dqn", type=str)
     parser.add_argument('-i', '--pretrain_iters', default=500, type=int)
     parser.add_argument('-V', '--no_videos', action="store_true")
-    parser.add_argument('-f', '--stacked_frames', default=4, type=int)
+    parser.add_argument('-f', '--stacked_frames', default=1, type=int)
     parser.add_argument('-ns', '--n_steps', default=1000, type=int)
     parser.add_argument('-tf', '--train_freq', default=1e4, type=int)
     parser.add_argument('-na', '--n_agents', default=5, type=int)
     parser.add_argument('-ng', '--num_gpu', default="1", type=str, help="gpu id")
     parser.add_argument('-br', '--buffer_ratio', default=0.1, type=float, help='ratio of buffer size to number of labels (to reduce memory usage)')
     parser.add_argument('-d', '--debug', action="store_true", default=True)
-    parser.add_argument('-c', '--same_color', action="store_true", default=False)
+    parser.add_argument('-c', '--same_color', action="store_true", default=True)
     parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
-    parser.add_argument('-ן', '--independent', action="store_true", default=True)
+    parser.add_argument('-ן', '--independent', action="store_true", default=False)
     parser.add_argument('-r', '--real_rewards', action="store_true", default=True)
     parser.add_argument('-sd', '--same_dim', action="store_true", default=True)
     parser.add_argument('-m', '--metric', default=0, choices=[0, 1, 2], help="metric for RP to optimize. 0: efficiency , 1: efficiency * peace, 2: efficiency * peace * equality")
@@ -156,7 +156,7 @@ def main():
     elif args.agent  == "dqn":
         learner_kwargs = {
                           'learning_rate': 0.0005,
-                          'batch_size': 32,
+                          'batch_size': 128,
                           'tau': 0.02,
                           'gamma': 0.99,
                           'train_freq': 4,

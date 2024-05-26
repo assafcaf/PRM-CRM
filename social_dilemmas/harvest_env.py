@@ -23,7 +23,7 @@ def build_env(rollout_len, num_agents, num_cpus, num_frames, num_envs, use_my_wr
     env = ss.frame_stack_v1(env, num_frames)
     env = ss.pettingzoo_env_to_vec_env_v1(env)
     env = ss.concat_vec_envs_v1(
-        env, num_vec_envs=num_envs, num_cpus=num_cpus, base_class="stable_baselines3"
+        env, num_vec_envs=num_envs, num_cpus=16, base_class="stable_baselines3"
     )
     # TODO: make sure that this change is correct for using the reward predictor
     env = VecTransposeImage(env)
