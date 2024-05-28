@@ -96,13 +96,14 @@ def do_rollout(env, action_function, stacked_frames):
     return path
 
 def basic_segments_from_rand_rollout(
-    env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames, max_episode_steps=500,
+    env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames,    
+    max_episode_steps, same_color, gray_scale, same_dim,
     # These are only for use with multiprocessing
     seed=0, _verbose=True, _multiplier=1
 ):
     """ Generate a list of path segments by doing random rollouts. No multiprocessing. """
     segments = []
-    env = make_env(env_id, max_episode_steps)
+    env = make_env(env_id, max_episode_steps, same_color=same_color, gray_scale=gray_scale, same_dim=same_dim)
     env.seed(seed)
     # space_prng.seed(seed)
     segment_length = int(clip_length_in_seconds * env.fps)
@@ -123,16 +124,19 @@ def basic_segments_from_rand_rollout(
         print("Successfully collected %s segments" % (len(segments) * _multiplier))
     return segments
 
-def segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds, workers, stacked_frames, max_episode_steps):
+def segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds, workers,
+                               stacked_frames, max_episode_steps, same_color, gray_scale, same_dim):
     """ Generate a list of path segments by doing random rollouts. Can use multiple processes. """
     if workers < 2:  # Default to basic segment collection
-        return basic_segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames, max_episode_steps)
+        return basic_segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds,
+                                                stacked_frames, same_color, gray_scale, same_dim, max_episode_steps)
 
     pool = Pool(processes=workers)
     segments_per_worker = int(math.ceil(n_desired_segments / workers))
     # One job per worker. Only the first worker is verbose.
     jobs = [
-        (env_id, make_env, segments_per_worker, clip_length_in_seconds, stacked_frames, max_episode_steps, i, i == 0, workers)
+        (env_id, make_env, segments_per_worker, clip_length_in_seconds, stacked_frames, max_episode_steps,
+         same_color, gray_scale, same_dim, i, i == 0, workers)
         for i in range(workers)]
     results = pool.starmap(basic_segments_from_rand_rollout, jobs)
     pool.close()

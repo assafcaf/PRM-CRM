@@ -4,20 +4,21 @@ from collections import deque
 
 import numpy as np
 import torch
-
+from gym.spaces import Box, Dict
 from nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from segment_sampling import sample_segment_from_path
 from utils import corrcoef
 from comparison_collectors import SyntheticComparisonCollector
 from segment_sampling import segments_from_rand_rollout
+from agents.independent_dqn.buffer import PredictorBuffer
 
 
-def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape):
+def nn_predict_rewards(obs_segments, act_segments, network, observation_space, act_shape):
     """
-    :param obs_segments: tensor with shape = (batch_size, segment_length) + obs_shape
+    :param obs_segments: tensor with shape = (batch_size, segment_length) + observation_space
     :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
     :param network: neural net with .run() that maps obs and act tensors into a (scalar) value tensor
-    :param obs_shape: a tuple representing the shape of the observation space
+    :param observation_space: a tuple representing the shape of the observation space
     :param act_shape: a tuple representing the shape of the action space
     :return: tensor with shape = (batch_size, segment_length)
     """
@@ -27,8 +28,8 @@ def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape
     segment_length = (obs_segments).shape[1]
 
     # Temporarily chop up segments into individual observations and actions
-    # TODO: makesure its works fine without transpose (obs_shape)
-    obs = obs_segments.view((-1,) + obs_shape)
+    # TODO: makesure its works fine without transpose (observation_space)
+    obs = obs_segments.view((-1,) + observation_space)
     acts = act_segments.view((-1, 1))
 
     # # Run them through our neural network
@@ -60,10 +61,9 @@ class RewardModel(object):
 class ComparisonRewardPredictor(RewardModel):
     """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
 
-    def __init__(self, summary_writer, agent_logger, label_schedule, fps, observation_space, action_space,
+    def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_envs,
                  stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000):
         """ Initialize the reward predictor
-        :param summary_writer: a tensorboardX summary writer
         :param agent_logger: an AgentLogger object
         :param label_schedule: a LabelSchedule object
         :param fps: the frames per second of the environment
@@ -76,7 +76,6 @@ class ComparisonRewardPredictor(RewardModel):
         :param train_freq: how often to train the model
         :param comparison_collector_max_len: the maximum number of comparisons to store
         """
-        self.summary_writer = summary_writer
         self.agent_logger = agent_logger
         self.label_schedule = label_schedule
         self.stacked_frames = stacked_frames
@@ -94,24 +93,26 @@ class ComparisonRewardPredictor(RewardModel):
         
         # Build and initialize our predictor model
  
-        self.obs_shape = (stacked_frames*observation_space.shape[0],) + observation_space.shape[1:]
+        self.observation_space = Box(low=0, high=255, shape=(stacked_frames*observation_space.shape[0],) + observation_space.shape[1:], dtype=np.uint8)
+        
         self.discrete_action_space = hasattr(action_space, "shape")
         self.act_shape = (action_space.n,) if self.discrete_action_space else action_space.shape
         
         self.model = self._build_model()
         self.loss = torch.nn.CrossEntropyLoss()
         self.train_op = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)
+        self.ep_buffer = PredictorBuffer(num_envs)
         
     def _predict_rewards(self, obs_segments, act_segments, network):
         """
-        :param obs_segments: tensor with shape = (batch_size, segment_length) + obs_shape
+        :param obs_segments: tensor with shape = (batch_size, segment_length) + observation_space
         :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
         :param network: neural net with .run() that maps obs and act tensors into a (scalar) value tensor
         :return: tensor with shape = (batch_size, segment_length)
         """
         obs_segments = obs_segments.to(self.device).float()
         act_segments = act_segments.to(self.device)
-        return nn_predict_rewards(obs_segments, act_segments, network, self.obs_shape, self.act_shape)
+        return nn_predict_rewards(obs_segments, act_segments, network, self.observation_space, self.act_shape)
 
     def _build_model(self):
         """
@@ -125,17 +126,20 @@ class ComparisonRewardPredictor(RewardModel):
         if self.discrete_action_space:
             # HACK Use a convolutional network for Atari
             # TODO Should check the input space dimensions, not the output space!
-            net = SimpleConvolveObservationQNet(obs_shape=self.obs_shape, h_size=64, emb_dim=32, n_actions=self.act_shape[0])
+            net = SimpleConvolveObservationQNet(observation_space=self.observation_space, h_size=64, emb_dim=32, n_actions=self.act_shape[0])
              
         else:
             # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
-            net = FullyConnectedMLP(obs_shape=self.obs_shape, h_size=64, emb_dim=32, n_actions=self.act_shape[0])
+            net = FullyConnectedMLP(observation_space=self.observation_space, h_size=64, emb_dim=32, n_actions=self.act_shape[0])
 
 
         # We use trajectory segments rather than individual (state, action) pairs because
         # video clips of segments are easier for humans to evaluate
         return net.to(self.device)
 
+    def store_step(self, obs, act, pred_rewards, real_rewards, human_obs):
+        self.ep_buffer.store(obs, act, pred_rewards, real_rewards, human_obs)
+    
     def predict(self, obs, act):
         """Predict the reward for 1 time step """
         r = self.model(obs.float(), act.long().to(self.device))
@@ -275,45 +279,44 @@ class ComparisonRewardPredictor(RewardModel):
 
     def copy(self):
         new_predictor = ComparisonRewardPredictor(
-            self.summary_writer, self.agent_logger, self.label_schedule, self.fps, self.observation_space,
-            self.action_space, self.stacked_frames, self.device)
+            self.agent_logger, self.label_schedule, self.fps, self.observation_space,
+            self.action_space, self.num_envs, self.stacked_frames, self.device)
         new_predictor.model.load_state_dict(self.model.state_dict())
         new_predictor.comparison_collector = self.comparison_collector.copy()
         return new_predictor
     
 class PrmComparisonRewardPredictor(RewardModel):
-    def __init__(self, num_agents, num_envs, summary_writer, agent_logger, label_schedule, fps, observation_space, action_space,
+    def __init__(self, num_agents, num_envs, agent_logger, label_schedule, fps, observation_space, action_space,
                  stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000, pre_train=True):
         self.num_agents = num_agents
         self.num_envs = num_envs
-        self.summary_writer=summary_writer
         self.agent_logger=agent_logger
         self.label_schedule=label_schedule
         self.fps=fps
-        self.observation_space=observation_space
+        self.observation_space = Box(low=0, high=255, shape=(stacked_frames*observation_space.shape[0],) + observation_space.shape[1:], dtype=np.uint8)
+
         self.action_space=action_space
         self.stacked_frames=stacked_frames
         self.device=device
         self.lr=lr
         self.clip_length=clip_length
         self.train_freq=train_freq
-        self.comparison_collector = SyntheticComparisonCollector(max_len=comparison_collector_max_len)
-        
+        self.comparison_collector_max_len = comparison_collector_max_len
         if pre_train:
             self.predictors = [None for _ in range(num_agents)]
         else:
             self.predictors = [ComparisonRewardPredictor(fps=fps,
-                                                     observation_space=observation_space,
-                                                     action_space=action_space,
-                                                     summary_writer=summary_writer,
-                                                     agent_logger=agent_logger,
-                                                     label_schedule=label_schedule,
-                                                     stacked_frames=stacked_frames,
-                                                     device=device, 
-                                                     lr=lr,
-                                                     clip_length=clip_length,
-                                                     train_freq=train_freq,
-                                                     comparison_collector_max_len=comparison_collector_max_len)
+                                                         observation_space=observation_space,
+                                                         action_space=action_space,
+                                                         agent_logger=agent_logger,
+                                                         label_schedule=label_schedule,
+                                                         stacked_frames=stacked_frames,
+                                                         num_envs=num_envs,
+                                                         device=device, 
+                                                         lr=lr,
+                                                         clip_length=clip_length,
+                                                         train_freq=train_freq,
+                                                         comparison_collector_max_len=comparison_collector_max_len)
                         for _ in range(num_agents)]
         
     def predict(self, obs, act):
@@ -322,31 +325,41 @@ class PrmComparisonRewardPredictor(RewardModel):
         for i, predictor in enumerate(self.predictors):
             r = predictor.model(obs[i::self.num_agents].float(), act[i::self.num_agents].long().to(self.device))
             predictions[i::self.num_agents] = r.cpu().detach().numpy().squeeze()
-        return r
+        return predictions
         
     def path_callback(self, path, agent_id):
         self.predictors[agent_id].path_callback(path)
 
-    def pre_trian(self, env_id, make_env, pretrain_labels, clip_length, workers, n_steps, pretrain_iters):
+    def store_step(self, obs, act, pred_rewards, real_rewards, human_obs):
+        for i, predictor in enumerate(self.predictors):
+            predictor.store_step(obs[i::self.num_agents],
+                                 act[i::self.num_agents],
+                                 pred_rewards[i::self.num_agents],
+                                 real_rewards[i::self.num_agents],
+                                 np.array(human_obs)[i::self.num_agents])
+        
+    
+    def pre_trian(self, env_id, make_env, pretrain_labels, clip_length, num_envs, n_steps, pretrain_iters,
+                  same_color, gray_scale, same_dim):
         """Pretrain the reward model using random rollouts. train one predictor and copy itself to each agent's predictor such that after pretrain all predictors are exactly the same
         """
         print("Starting random rollouts to generate pretraining segments. No learning will take place...")
         predictor = ComparisonRewardPredictor(fps=self.fps,
                                               observation_space=self.observation_space,
                                               action_space=self.action_space,
-                                              summary_writer=self.ummary_writer,
                                               agent_logger=self.agent_logger,
                                               label_schedule=self.label_schedule,
                                               stacked_frames=self.stacked_frames,
                                               device=self.device, 
                                               lr=self.lr,
+                                              num_envs=self.num_envs,
                                               clip_length=self.clip_length,
                                               train_freq=self.train_freq,
                                               comparison_collector_max_len=self.comparison_collector_max_len)
         
         pretrain_segments = segments_from_rand_rollout(
-            env_id, make_env, n_desired_segments=pretrain_labels * 2,
-            clip_length_in_seconds=clip_length, workers=workers,
+            env_id, make_env, n_desired_segments=pretrain_labels * 2, same_color=same_color,
+            clip_length_in_seconds=clip_length, workers=num_envs, gray_scale=gray_scale, same_dim=same_dim,
             stacked_frames=self.stacked_frames, max_episode_steps=n_steps)
         
         for i in range(pretrain_labels):  # Turn our random segments into comparisons
@@ -375,10 +388,9 @@ class PrmComparisonRewardPredictor(RewardModel):
         return self.predictors[0].comparison_collector.buffer_usage()
 
 class CrmComparisonRewardPredictor(RewardModel):
-    def __init__(self, summary_writer, agent_logger, label_schedule, fps, observation_space, action_space, num_agents,
+    def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_agents,
                 stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000):
         """ Initialize the reward predictor
-        :param summary_writer: a tensorboardX summary writer
         :param agent_logger: an AgentLogger object
         :param label_schedule: a LabelSchedule object
         :param fps: the frames per second of the environment
@@ -391,7 +403,6 @@ class CrmComparisonRewardPredictor(RewardModel):
         :param train_freq: how often to train the model
         :param comparison_collector_max_len: the maximum number of comparisons to store
         """
-        self.summary_writer = summary_writer
         self.agent_logger = agent_logger
         self.label_schedule = label_schedule
         self.stacked_frames = stacked_frames
@@ -410,7 +421,8 @@ class CrmComparisonRewardPredictor(RewardModel):
         
         # Build and initialize our predictor model
 
-        self.obs_shape = (stacked_frames*observation_space.shape[0],) + observation_space.shape[1:]
+        self.observation_space = (stacked_frames*observation_space.shape[0],) + observation_space.shape[1:]
+        
         self.discrete_action_space = hasattr(action_space, "shape")
         self.act_shape = (action_space.n,) if self.discrete_action_space else action_space.shape
         
@@ -420,14 +432,14 @@ class CrmComparisonRewardPredictor(RewardModel):
                     
     def _predict_rewards(self, obs_segments, act_segments, network):
         """
-        :param obs_segments: tensor with shape = (batch_size, segment_length) + obs_shape
+        :param obs_segments: tensor with shape = (batch_size, segment_length) + observation_space
         :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
         :param network: neural net with .run() that maps obs and act tensors into a (scalar) value tensor
         :return: tensor with shape = (batch_size, segment_length)
         """
         obs_segments = obs_segments.to(self.device).float()
         act_segments = act_segments.to(self.device)
-        return nn_predict_rewards(obs_segments, act_segments, network, self.obs_shape, self.act_shape)
+        return nn_predict_rewards(obs_segments, act_segments, network, self.observation_space, self.act_shape)
 
     def _build_model(self):
         """
@@ -441,11 +453,11 @@ class CrmComparisonRewardPredictor(RewardModel):
         if self.discrete_action_space:
             # HACK Use a convolutional network for Atari
             # TODO Should check the input space dimensions, not the output space!
-            net = SimpleConvolveObservationQNet(obs_shape=self.obs_shape, h_size=64, emb_dim=32, n_actions=self.act_shape[0], num_outputs=self.num_agents)
+            net = SimpleConvolveObservationQNet(observation_space=self.observation_space, h_size=64, emb_dim=32, n_actions=self.act_shape[0], num_outputs=self.num_agents)
              
         else:
             # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
-            net = FullyConnectedMLP(obs_shape=self.obs_shape, h_size=64, emb_dim=32, n_actions=self.act_shape[0],  num_outputs=self.num_agents)
+            net = FullyConnectedMLP(observation_space=self.ob, h_size=64, emb_dim=32, n_actions=self.act_shape[0],  num_outputs=self.num_agents)
 
 
         # We use trajectory segments rather than individual (state, action) pairs because
@@ -591,7 +603,7 @@ class CrmComparisonRewardPredictor(RewardModel):
 
     def copy(self):
         new_predictor = ComparisonRewardPredictor(
-            self.summary_writer, self.agent_logger, self.label_schedule, self.fps, self.observation_space,
+            self.agent_logger, self.label_schedule, self.fps, self.observation_space,
             self.action_space, self.stacked_frames, self.device)
         new_predictor.model.load_state_dict(self.model.state_dict())
         new_predictor.comparison_collector = self.comparison_collector.copy()

@@ -21,7 +21,6 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Rollout
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 import psutil 
 
-from agents.dqn2.buffer import PredictorBuffer
 class DQN(sb3_DQN):
     """
     Deep Q-Network (DQN)
@@ -211,7 +210,6 @@ class DQNRP(sb3_DQN):
                          _init_setup_model=_init_setup_model)
         self.real_rewards = real_rewards
         self.predictor = predictor
-        self.predictor_beffer =  PredictorBuffer(self.env.num_envs)
 
     def _update_info_buffer(self, infos, dones=None) -> None:
         """
@@ -301,7 +299,7 @@ class DQNRP(sb3_DQN):
                     human_obs = self.env.get_images()
                 except AttributeError:
                     human_obs = [info["human_obs"] for info in infos]
-                self.predictor_beffer.store(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
+                self.predictor.store_step(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
             else: pred_rewards = real_rewards
             
             

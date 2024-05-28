@@ -92,7 +92,7 @@ class IndependentDQN(sb3_DQN):
         self.num_agents = num_agents
         self.num_envs = env.num_envs // num_agents
         self.predictor = predictor
-        self.predictor_beffer =  PredictorBuffer(self.env.num_envs)
+
         
         
         env_fn = lambda: DummyGymEnv(self.observation_space, self.action_space)
@@ -326,7 +326,7 @@ class IndependentDQN(sb3_DQN):
                     human_obs = self.env.get_images()
                 except AttributeError:
                     human_obs = [info["human_obs"] for info in infos]
-                self.predictor_beffer.store(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
+                self.predictor.store_step(self._last_obs, actions, pred_rewards, real_rewards, human_obs)
             else: pred_rewards = real_rewards
             
             

@@ -32,15 +32,11 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
     concatinating the action and being an MLP.
     """
 
-    def __init__(self, obs_shape, h_size=64, emb_dim=32, n_actions=2, num_outputs=1):
-        after_convolve_shape = (
-            int(ceil((ceil(obs_shape[1] - 6) / 3-4) / 2) -2 -2),
-            int(ceil((ceil(obs_shape[2] - 6) / 3-4) / 2) -2 -2),
-            16)
-        super().__init__(after_convolve_shape, h_size, emb_dim, n_actions, num_outputs)
-        #  original network
+    def __init__(self, observation_space, features_dim=128, h_size=64, emb_dim=32, n_actions=2, num_outputs=1):
+        super().__init__(features_dim, h_size, emb_dim, n_actions, num_outputs)
+        # my backbonde
         # self.back_bone = nn.Sequential(
-        #     nn.Conv2d(4, 16, kernel_size=7, stride=3),
+        #     nn.Conv2d(observation_space.shape[0], 16, kernel_size=7, stride=3),
         #     nn.Dropout2d(0.5),
         #     # nn.BatchNorm2d(16),
         #     nn.LeakyReLU(0.01),
@@ -59,30 +55,24 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
         #     nn.Dropout2d(0.5),
         #     # nn.BatchNorm2d(16),
         #     nn.LeakyReLU(0.01),
+        #     nn.Flatten()
         # )
         
-        # sb3 network
+        # sb3 cnn
         self.back_bone = nn.Sequential(
-            nn.Conv2d(obs_shape[0], 16, kernel_size=7, stride=3),
-            nn.Dropout2d(0.5),
-            # nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.01),
+        nn.Conv2d(observation_space.shape[0], 32, kernel_size=8, stride=4, padding=0),
+        nn.ReLU(),
+        nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+        nn.ReLU(),
+        nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+        nn.ReLU(),
+        nn.Flatten())
+        
+        with torch.no_grad():
+            n_flatten = self.back_bone(torch.as_tensor(observation_space.sample()[None]).float()).shape[1]
 
-            nn.Conv2d(16, 16, kernel_size=5, stride=2),
-            nn.Dropout2d(0.5),
-            # nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.01),
-            
-            nn.Conv2d(16, 16, kernel_size=3, stride=1),
-            nn.Dropout2d(0.5),
-            # nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.01),
-            
-            nn.Conv2d(16, 16, kernel_size=3, stride=1),
-            nn.Dropout2d(0.5),
-            # nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.01),
-        )
+        self.linear = nn.Sequential(nn.Linear(n_flatten, features_dim),
+                                    nn.ReLU())
         self.float()
         
     def forward(self, obs, act):
@@ -97,7 +87,6 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
         
         # not sure why I need to transpose here but I do....
         # obs.transpose_(1, -1)
-        x = self.back_bone(obs)
-        x = x.flatten(1)
+        x = self.linear(self.back_bone(obs))
         x = torch.cat([x, emb], axis=1)
         return self.mlp(x)

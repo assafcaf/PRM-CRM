@@ -8,9 +8,8 @@ import numpy as np
 from gym import error
 
 class SegmentVideoRecorder(object):
-    def __init__(self, predictor, env, save_dir, checkpoint_interval=1_000):
+    def __init__(self, predictor, save_dir, checkpoint_interval=1_000):
         self.predictor = predictor
-        self.env = env
         self.checkpoint_interval = checkpoint_interval
         self.save_dir = save_dir
 
@@ -36,6 +35,9 @@ class SegmentVideoRecorder(object):
     
     def buffer_usage(self):
         return self.predictor.buffer_usage()
+    
+    def store_step(self, obs, action, pred_rewards, real_rewards, human_obs):
+        return self.predictor.store_step(obs, action, pred_rewards, real_rewards, human_obs)   
 
 def write_segment_to_video(segment, fname, env):
     os.makedirs(osp.dirname(fname), exist_ok=True)

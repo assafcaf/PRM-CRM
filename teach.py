@@ -1,4 +1,5 @@
 import os
+import warnings
 import os.path as osp
 from time import time, sleep
 import torch
@@ -8,15 +9,12 @@ from agents.dqn2.agent import DQN, DQNRP
 from agents.independent_dqn.agent import IndependentDQN
 from stable_baselines3.common.logger import configure
 import argparse
-from comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from envs import make_env
 from label_schedules import LabelAnnealer, ConstantLabelSchedule
-from segment_sampling import segments_from_rand_rollout
 from summaries import AgentLoggerSb3
-from utils import slugify 
 from video import SegmentVideoRecorder
-from reward_models import ComparisonRewardPredictor
-import warnings
+from reward_models import ComparisonRewardPredictor, PrmComparisonRewardPredictor, CrmComparisonRewardPredictor
+
 
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
@@ -27,13 +25,15 @@ CLIP_LENGTH = 1
 metrics = {0: "Efficiency",
            1: "Efficiency*Peace",
            2: "Efficiency*Peace*Equality"}
+predictors = {0: 'ComparisonRewardPredictor',
+                1: 'PrmComparisonRewardPredictor',
+                2: 'CrmComparisonRewardPredictor'}
 
 def arg_pars():
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--env_id', default='harvest', type=str)  # 'PongNoFrameskip-v4'
-    parser.add_argument('-p', '--predictor', default="synth", type=str)
     parser.add_argument('-n', '--name', default='syn-{}_metric-{}', type=str)
-    parser.add_argument('-w', '--workers', default=16, type=int)
+    parser.add_argument('-w', '--workers', default=1, type=int)
     parser.add_argument('-l', '--n_labels', default=int(1e4), type=int)
     parser.add_argument('-L', '--pretrain_labels', default=50, type=int)
     parser.add_argument('-t', '--num_timesteps', default=5e7, type=int)
@@ -49,12 +49,21 @@ def arg_pars():
     parser.add_argument('-d', '--debug', action="store_true", default=True)
     parser.add_argument('-c', '--same_color', action="store_true", default=True)
     parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
-    parser.add_argument('-ן', '--independent', action="store_true", default=False)
-    parser.add_argument('-r', '--real_rewards', action="store_true", default=True)
-    parser.add_argument('-sd', '--same_dim', action="store_true", default=True)
+    parser.add_argument('-ן', '--independent', action="store_true", default=True)
+    parser.add_argument('-r', '--real_rewards', action="store_true", default=False)
+    parser.add_argument('-sd', '--same_dim', action="store_true", default=False)
+    parser.add_argument('-rp', '--rp_mode', default=1, type=int, choices=[0, 1, 2], help="reward predictor type. 0: synthetic, 1: PRM, 2: CRM")
     parser.add_argument('-m', '--metric', default=0, choices=[0, 1, 2], help="metric for RP to optimize. 0: efficiency , 1: efficiency * peace, 2: efficiency * peace * equality")
     args = parser.parse_args()
     return args
+
+def make_reward_predictor(mode, **args):
+    if mode == 0:
+        return ComparisonRewardPredictor(**args)
+    elif mode == 1:
+        return PrmComparisonRewardPredictor(**args)
+    elif mode == 2:
+        return CrmComparisonRewardPredictor(**args)
 
 def main():
     print("Setting things up...")
@@ -63,16 +72,18 @@ def main():
     args = arg_pars()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.num_gpu
     pre_trian = True
+
     if args.debug:
         pre_trian = False
         if not args.real_rewards:
-            args.workers = 3
-        
+            args.workers = 2
+    num_envs = args.workers   
+    
     # Set up the run name and save directory 
     args.name = args.name.format(args.n_labels, metrics[args.metric])
     env_id = args.env_id
     run_name = "%s%s/%s-%s" % (env_id,
-                               f"{'-independent' if args.independent else ''}{'-RealRewards' if args.real_rewards else ''}",
+                               f"{'-independent' if args.independent else ''}{'-' + predictors[args.rp_mode]}{'-RealRewards' if args.real_rewards else ''}",
                                args.name, int(time()))
     save_dir = fr'/home/acaftory/CommonsGame/my-atari-teacher-MultiAgent3/results/{args.agent}'
 
@@ -99,25 +110,51 @@ def main():
         label_schedule = ConstantLabelSchedule(pretrain_labels=pretrain_labels)
 
     # Set up the reward predictor
-    predictor = ComparisonRewardPredictor(
-        sb3_logger, 
-        agent_logger=agent_logger,
-        clip_length=CLIP_LENGTH,
-        label_schedule=label_schedule,
-        fps=env.fps,
-        observation_space=env.observation_space,
-        action_space=env.action_space,
-        stacked_frames=args.stacked_frames,
-        train_freq=args.train_freq,
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-        comparison_collector_max_len = int(args.n_labels * args.buffer_ratio)
+    predictor = make_reward_predictor(mode=args.rp_mode,
+                                      num_agents=args.n_agents,
+                                      num_envs=num_envs,
+                                      agent_logger=sb3_logger, 
+                                      label_schedule=label_schedule,
+                                      fps=env.fps,
+                                      observation_space=env.observation_space,
+                                      action_space=env.action_space,
+                                      stacked_frames=args.stacked_frames,
+                                      device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+                                      clip_length=CLIP_LENGTH,
+                                      train_freq=args.train_freq,
+                                      comparison_collector_max_len = int(args.n_labels * args.buffer_ratio),
+                                      pre_train=pre_trian
     )
+    
+    # ComparisonRewardPredictor(
+    #     sb3_logger, 
+    #     agent_logger=agent_logger,
+    #     clip_length=CLIP_LENGTH,
+    #     label_schedule=label_schedule,
+    #     fps=env.fps,
+    #     observation_space=env.observation_space,
+    #     action_space=env.action_space,
+    #     stacked_frames=args.stacked_frames,
+    #     train_freq=args.train_freq,
+    #     device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+    #     comparison_collector_max_len = int(args.n_labels * args.buffer_ratio)
+    # )
     if pre_trian:
-        predictor.pre_trian(env_id, make_env, pretrain_labels, CLIP_LENGTH, args.workers, args.n_steps, args.pretrain_iters)
+        predictor.pre_trian(env_id=env_id,
+                            make_env=make_env,
+                            pretrain_labels=pretrain_labels,
+                            clip_length=CLIP_LENGTH,
+                            num_envs=num_envs,
+                            n_steps=args.n_steps,
+                            pretrain_iters=args.pretrain_iters,
+                            same_color=args.same_color,
+                            gray_scale=args.gray_scale,
+                            same_dim=args.same_dim
+                            )
 
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
-        predictor = SegmentVideoRecorder(predictor, env, save_dir=osp.join(save_dir, run_name))
+        predictor = SegmentVideoRecorder(predictor, save_dir=osp.join(save_dir, run_name))
         
     
 
@@ -126,8 +163,8 @@ def main():
         vec_env = make_atari_env(env_id, n_envs=args.workers)
         vec_env = VecFrameStack(vec_env, n_stack=args.stacked_frames)
     else: 
-        vec_env = build_env(rollout_len=args.n_steps, num_agents=args.n_agents, num_cpus=args.workers, same_color=args.same_color, 
-                            gray_scale=args.gray_scale, num_frames=args.stacked_frames, num_envs=args.workers, use_my_wrap=False, metric=args.metric)
+        vec_env = build_env(rollout_len=args.n_steps, num_agents=args.n_agents, num_cpus=num_envs, same_color=args.same_color, same_dim=args.same_dim,
+                            gray_scale=args.gray_scale, num_frames=args.stacked_frames, num_envs=num_envs, use_my_wrap=False, metric=args.metric)
     
     # We use a vanilla agent from openai/baselines that contains a single change that blinds it to the true reward
     # The single changed section is in `rl_teacher/agent/trpo/core.py`
@@ -190,7 +227,7 @@ def main():
                           **learner_kwargs)
         agent.set_logger(sb3_logger)
         print("build eval env")
-        eval_env = build_env(rollout_len=args.n_steps, num_agents=args.n_agents, num_cpus=1, same_color=args.same_color, 
+        eval_env = build_env(rollout_len=args.n_steps, num_agents=args.n_agents, num_cpus=1, same_color=args.same_color, same_dim=args.same_dim,
                             gray_scale=args.gray_scale, num_frames=args.stacked_frames, num_envs=1, use_my_wrap=False, metric=args.metric)
         
         callback = SingleDQNAgentCallback(eval_env, verbose=0, render_frequency=10000, deterministic=False, args=vars(args))
