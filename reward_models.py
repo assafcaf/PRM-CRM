@@ -29,7 +29,7 @@ def nn_predict_rewards(obs_segments, act_segments, network, observation_space, a
 
     # Temporarily chop up segments into individual observations and actions
     # TODO: makesure its works fine without transpose (observation_space)
-    obs = obs_segments.view((-1,) + observation_space)
+    obs = obs_segments.view((-1,) + observation_space.shape)
     acts = act_segments.view((-1, 1))
 
     # # Run them through our neural network
@@ -140,6 +140,9 @@ class ComparisonRewardPredictor(RewardModel):
     def store_step(self, obs, act, pred_rewards, real_rewards, human_obs):
         self.ep_buffer.store(obs, act, pred_rewards, real_rewards, human_obs)
     
+    def get_paths(self):
+        yield self.ep_buffer.get(), 0 # 0 is agent_id (to be compatible with PRM architecture)
+    
     def predict(self, obs, act):
         """Predict the reward for 1 time step """
         r = self.model(obs.float(), act.long().to(self.device))
@@ -161,7 +164,7 @@ class ComparisonRewardPredictor(RewardModel):
 
         # We may be in a new part of the environment, so we take new segments to build comparisons from
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
-        if segment and random.random() < 0.25:
+        if segment and random.random() < 0.25 or len(self.recent_segments) < 10:
             self.recent_segments.append(segment)
 
         # If we need more comparisons, then we build them from our recent segments
@@ -328,7 +331,7 @@ class PrmComparisonRewardPredictor(RewardModel):
         return predictions
         
     def path_callback(self, path, agent_id):
-        self.predictors[agent_id].path_callback(path)
+        self.predictors[agent_id].path_callback(path, agent_id)
 
     def store_step(self, obs, act, pred_rewards, real_rewards, human_obs):
         for i, predictor in enumerate(self.predictors):
@@ -338,7 +341,6 @@ class PrmComparisonRewardPredictor(RewardModel):
                                  real_rewards[i::self.num_agents],
                                  np.array(human_obs)[i::self.num_agents])
         
-    
     def pre_trian(self, env_id, make_env, pretrain_labels, clip_length, num_envs, n_steps, pretrain_iters,
                   same_color, gray_scale, same_dim):
         """Pretrain the reward model using random rollouts. train one predictor and copy itself to each agent's predictor such that after pretrain all predictors are exactly the same
@@ -363,22 +365,22 @@ class PrmComparisonRewardPredictor(RewardModel):
             stacked_frames=self.stacked_frames, max_episode_steps=n_steps)
         
         for i in range(pretrain_labels):  # Turn our random segments into comparisons
-            predictor.add_segment_pair(pretrain_segments[i], pretrain_segments[i + pretrain_labels])
+            predictor.comparison_collector.add_segment_pair(pretrain_segments[i], pretrain_segments[i + pretrain_labels])
 
         # Sleep until the human has labeled most of the pretraining comparisons
-        while len(self.comparison_collector.labeled_comparisons) < int(pretrain_labels * 0.75):
-            self.comparison_collector.label_unlabeled_comparisons()
-            print("%s synthetic labels generated... " % (len(self.comparison_collector.labeled_comparisons)))
+        while len(predictor.comparison_collector.labeled_comparisons) < int(pretrain_labels * 0.75):
+            predictor.comparison_collector.label_unlabeled_comparisons()
+            print("%s synthetic labels generated... " % (len(predictor.comparison_collector.labeled_comparisons)))
 
         # Start the actual training
         losses = []
         for i in range(pretrain_iters):
-            loss = self.train_predictor()  # Train on pretraining labels
+            loss = predictor.train_predictor()  # Train on pretraining labels
             losses.append(loss)
             if i % 100 == 0:
                 print("%s/%s predictor pretraining iters... (Err: %s)" % (i, pretrain_iters, np.mean(losses)))
         
-        self.predictors = [predictor.copy() for _ in self.num_agents]
+        self.predictors = [predictor.copy() for _ in range(self.num_agents)]
                 
     def train_predictor(self, verbose=False):
         losses = [predictor.train_predictor(verbose) for predictor in self.predictors]
@@ -386,6 +388,12 @@ class PrmComparisonRewardPredictor(RewardModel):
     
     def buffer_usage(self):
         return self.predictors[0].comparison_collector.buffer_usage()
+
+    def get_paths(self):
+        for i, predictor in enumerate(self.predictors):
+            samples = predictor.ep_buffer.get()
+            for sample in samples:
+                yield sample, i # i is agent_id 
 
 class CrmComparisonRewardPredictor(RewardModel):
     def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_agents,

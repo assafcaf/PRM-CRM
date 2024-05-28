@@ -33,7 +33,7 @@ def arg_pars():
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--env_id', default='harvest', type=str)  # 'PongNoFrameskip-v4'
     parser.add_argument('-n', '--name', default='syn-{}_metric-{}', type=str)
-    parser.add_argument('-w', '--workers', default=1, type=int)
+    parser.add_argument('-w', '--workers', default=16, type=int)
     parser.add_argument('-l', '--n_labels', default=int(1e4), type=int)
     parser.add_argument('-L', '--pretrain_labels', default=50, type=int)
     parser.add_argument('-t', '--num_timesteps', default=5e7, type=int)
@@ -46,7 +46,7 @@ def arg_pars():
     parser.add_argument('-na', '--n_agents', default=5, type=int)
     parser.add_argument('-ng', '--num_gpu', default="1", type=str, help="gpu id")
     parser.add_argument('-br', '--buffer_ratio', default=0.1, type=float, help='ratio of buffer size to number of labels (to reduce memory usage)')
-    parser.add_argument('-d', '--debug', action="store_true", default=True)
+    parser.add_argument('-d', '--debug', action="store_true", default=False)
     parser.add_argument('-c', '--same_color', action="store_true", default=True)
     parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
     parser.add_argument('-ן', '--independent', action="store_true", default=True)
@@ -93,7 +93,7 @@ def main():
 
     # Set up the logger
     sb3_logger = configure(osp.join(save_dir, run_name), ["stdout", "tensorboard"])
-    agent_logger = AgentLoggerSb3(sb3_logger)
+    predictor_logger = AgentLoggerSb3(sb3_logger)
 
 
     # Set up the label schedule
@@ -101,7 +101,7 @@ def main():
     num_timesteps = int(args.num_timesteps)
     if args.n_labels:
         label_schedule = LabelAnnealer(
-            agent_logger=agent_logger,
+            agent_logger=predictor_logger,
             final_timesteps=num_timesteps,
             final_labels=args.n_labels,
             pretrain_labels=pretrain_labels)
@@ -113,7 +113,7 @@ def main():
     predictor = make_reward_predictor(mode=args.rp_mode,
                                       num_agents=args.n_agents,
                                       num_envs=num_envs,
-                                      agent_logger=sb3_logger, 
+                                      agent_logger=predictor_logger, 
                                       label_schedule=label_schedule,
                                       fps=env.fps,
                                       observation_space=env.observation_space,
@@ -128,7 +128,7 @@ def main():
     
     # ComparisonRewardPredictor(
     #     sb3_logger, 
-    #     agent_logger=agent_logger,
+    #     predictor_logger=predictor_logger,
     #     clip_length=CLIP_LENGTH,
     #     label_schedule=label_schedule,
     #     fps=env.fps,

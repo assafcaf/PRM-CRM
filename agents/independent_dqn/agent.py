@@ -379,8 +379,7 @@ class IndependentDQN(sb3_DQN):
                 if log_interval is not None and self._episode_num % log_interval == 0:
                     self._dump_logs()
                 if not self.real_rewards:
-                    for i, path in enumerate(self.predictor_beffer.get()):
-                        agent_id = i % self.num_agents # indicate which agent the path belongs to
+                    for (path, agent_id) in self.predictor.get_paths():
                         self.predictor.path_callback(path, agent_id) 
 
         callback.on_rollout_end()

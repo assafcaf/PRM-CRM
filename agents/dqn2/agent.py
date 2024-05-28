@@ -342,8 +342,8 @@ class DQNRP(sb3_DQN):
                     
             # train reward_predictor
             if dones.all() and not self.real_rewards:
-                    for path in self.predictor_beffer.get():
-                        self.predictor.path_callback(path, 0)
+                    for path, agent_id in self.predictor.get_paths():
+                        self.predictor.path_callback(path, agent_id) 
 
         callback.on_rollout_end()
 

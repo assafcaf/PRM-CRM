@@ -8,11 +8,11 @@ import numpy as np
 from gym import error
 
 class SegmentVideoRecorder(object):
-    def __init__(self, predictor, save_dir, checkpoint_interval=1_000):
+    def __init__(self, predictor, save_dir, checkpoint_interval=1_000, fps=24):
         self.predictor = predictor
         self.checkpoint_interval = checkpoint_interval
         self.save_dir = save_dir
-
+        self.fps = fps
         self._num_paths_seen = 0  # Internal counter of how many paths we've seen
         self._counter = 0  # Internal counter of how many videos we've saved at a given iteration.
 
@@ -22,10 +22,10 @@ class SegmentVideoRecorder(object):
             print("Saving video of run %s_%s to %s" % (self._num_paths_seen, self._counter, fname))
             
             # TODO: hnadle env return None for human_obs than we can write to video
-            write_segment_to_video(path, fname, self.env)
+            write_segment_to_video(path, fname, self.fps)
         self._num_paths_seen += 1
 
-        self.predictor.path_callback(path)
+        self.predictor.path_callback(path, agent_id)
 
     def predict_reward(self, path):
         return self.predictor.predict_reward(path)
@@ -39,10 +39,13 @@ class SegmentVideoRecorder(object):
     def store_step(self, obs, action, pred_rewards, real_rewards, human_obs):
         return self.predictor.store_step(obs, action, pred_rewards, real_rewards, human_obs)   
 
-def write_segment_to_video(segment, fname, env):
+    def get_paths(self):
+        return self.predictor.get_paths()
+    
+def write_segment_to_video(segment, fname, fps):
     os.makedirs(osp.dirname(fname), exist_ok=True)
     frames = [x for x in segment["human_obs"]]
-    export_video(frames, fname, fps=env.fps)
+    export_video(frames, fname, fps=fps)
 
 def export_video(frames, fname, fps=10):
     assert "mp4" in fname, "Name requires .mp4 suffix"

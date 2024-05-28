@@ -129,7 +129,7 @@ def segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length
     """ Generate a list of path segments by doing random rollouts. Can use multiple processes. """
     if workers < 2:  # Default to basic segment collection
         return basic_segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds,
-                                                stacked_frames, same_color, gray_scale, same_dim, max_episode_steps)
+                                                stacked_frames, max_episode_steps, same_color, gray_scale, same_dim)
 
     pool = Pool(processes=workers)
     segments_per_worker = int(math.ceil(n_desired_segments / workers))

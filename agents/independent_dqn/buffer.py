@@ -24,5 +24,6 @@ class PredictorBuffer:
                         'original_rewards': [],
                         'human_obs': []}
                         for _ in range(self.nun_envs)]
-        return pathes
+        for path in pathes:
+            yield path
     
