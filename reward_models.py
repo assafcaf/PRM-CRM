@@ -80,7 +80,9 @@ class ComparisonRewardPredictor(RewardModel):
         self.label_schedule = label_schedule
         self.stacked_frames = stacked_frames
         self.device = device
-        
+        self.fps = fps
+        self.action_space = action_space
+        self.num_envs = num_envs
         # Set up some bookkeeping
         self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
         self._frames_per_segment = clip_length * fps
@@ -164,6 +166,7 @@ class ComparisonRewardPredictor(RewardModel):
 
         # We may be in a new part of the environment, so we take new segments to build comparisons from
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
+        print
         if segment and random.random() < 0.25 or len(self.recent_segments) < 10:
             self.recent_segments.append(segment)
 
@@ -285,7 +288,7 @@ class ComparisonRewardPredictor(RewardModel):
             self.agent_logger, self.label_schedule, self.fps, self.observation_space,
             self.action_space, self.num_envs, self.stacked_frames, self.device)
         new_predictor.model.load_state_dict(self.model.state_dict())
-        new_predictor.comparison_collector = self.comparison_collector.copy()
+        # new_predictor.comparison_collector = self.comparison_collector.copy()
         return new_predictor
     
 class PrmComparisonRewardPredictor(RewardModel):
