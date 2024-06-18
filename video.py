@@ -42,6 +42,9 @@ class SegmentVideoRecorder(object):
     def get_paths(self):
         return self.predictor.get_paths()
     
+    def dump(self, step):
+        return self.predictor.dump(step)
+    
 def write_segment_to_video(segment, fname, fps):
     os.makedirs(osp.dirname(fname), exist_ok=True)
     frames = [x for x in segment["human_obs"]]

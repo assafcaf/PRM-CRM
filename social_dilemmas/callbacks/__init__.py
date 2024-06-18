@@ -1,1 +1,1 @@
-from social_dilemmas.callbacks.src import SingleAgentCallback, IndependentAgentCallback, SingleDQNAgentCallback
+from social_dilemmas.callbacks.src import SingleAgentCallback, IndependentAgentCallback

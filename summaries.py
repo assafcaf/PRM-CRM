@@ -1,8 +1,11 @@
 from copy import deepcopy
 import os.path as osp
 from collections import deque
-
+from stable_baselines3.common.logger import Figure
 import numpy as np
+import matplotlib.pyplot as plt
+import cv2
+import random
 # import tensorflow as tf
 
 CLIP_LENGTH = 1.5
@@ -79,10 +82,10 @@ class AgentLogger(object):
 class AgentLoggerSb3(object):
     """Tracks the performance of an arbitrary agent"""
 
-    def __init__(self, summary_writer, timesteps_per_summary=int(1e3)):
+    def __init__(self, summary_writer, timesteps_per_summary=int(1e3), n_images=6):
         self.summary_step = 0
         self.timesteps_per_summary = timesteps_per_summary
-
+        self.n_images = n_images
         self._timesteps_elapsed = 0
         self._timesteps_since_last_training = 0
 
@@ -106,6 +109,9 @@ class AgentLoggerSb3(object):
         self.last_n_paths.append(path)
 
         if self._timesteps_since_last_training >= self.timesteps_per_summary:
+            if self.summary_step % 1000 == 0:
+                self.log_plot(path)
+                
             self.summary_step += 1
             if 'new' in path: # PPO puts multiple episodes into one path
                 last_n_episode_scores = [np.sum(path["original_rewards"]).astype(float) / np.sum(path["new"])
@@ -114,10 +120,55 @@ class AgentLoggerSb3(object):
                 last_n_episode_scores = [np.sum(path["original_rewards"]).astype(float) for path in self.last_n_paths]
 
             self.log_simple("agent/true_reward_per_episode", np.mean(last_n_episode_scores))
-            self.log_simple("agent/total_steps", self._timesteps_elapsed, )
-            self._timesteps_since_last_training -= self.timesteps_per_summary
-            # self.summary_writer.dump()
+            self.log_simple("agent/total_steps", self._timesteps_elapsed)
+            self.analyze_actions(path)
+            
 
+            self._timesteps_since_last_training -= self.timesteps_per_summary
+
+    def analyze_actions(self, path):
+        # predicted rewards for eaten and uneaten apples
+        l = len(path['obs'])
+        positive_reward = np.nanmean([path['rewards'][i] for i in range(l) if path['original_rewards'][i] == 1.])
+        zero_reward =  np.nanmean(path['rewards']) -  positive_reward
+                                     
+        self.log_simple("agent/positive_rewards", positive_reward)
+        self.log_simple("agent/zero_rewards", zero_reward)
+        
+        # predicted rewards per action
+        action_reward_map = {'move left':  np.nanmean([path['rewards'][i] for i in range(l) if path['actions'][i] == 0]),
+                             'move right': np.nanmean([path['rewards'][i] for i in range(l) if path['actions'][i] == 1]),
+                             'move up': np.nanmean([path['rewards'][i] for i in range(l) if path['actions'][i] == 2]),
+                             'move down': np.nanmean([path['rewards'][i] for i in range(l) if path['actions'][i] == 3]),
+                             'turn': np.nanmean([path['rewards'][i] for i in range(l) if path['actions'][i] == 5 or path['actions'][i] == 6]),
+                             'fire': np.nanmean([path['rewards'][i] for i in range(l) if path['actions'][i] == 7])}
+
+        for k, v in action_reward_map.items():
+            self.log_simple("agent/%s" % k, v)
+            
+    def dump(self, step):
+        self.summary_writer.dump(step)
+    
+    def log_plot(self, path):
+        
+        positive_reward = random.sample([i for i in range(len(path['obs'])-1) if path['original_rewards'][i]==1], self.n_images//2)
+        zero_reward = random.sample([i for i in range(len(path['obs'])-1) if path['original_rewards'][i]==0], self.n_images//2)
+        
+        idx = np.concatenate((positive_reward, zero_reward))
+        fig, axs = plt.subplots(self.n_images, 2, figsize=(8, 12))
+        for i, j in enumerate(idx):
+            
+            axs[i, 0].imshow(cv2.resize(path["obs"][j][0], (320, 320), interpolation=cv2.INTER_NEAREST), cmap='gray')
+            axs[i, 0].title.set_text("read reward %.3f" % path["original_rewards"][j])
+            axs[i, 0].axis('off')
+            
+            axs[i, 1].imshow(cv2.resize(path["obs"][j+1][0], (320, 320), interpolation=cv2.INTER_NEAREST), cmap='gray')
+            axs[i, 1].title.set_text("predicted reward %.3f" % path["rewards"][j])
+            axs[i, 1].axis('off')
+        plt.tight_layout()
+        self.summary_writer.record("Episode: %d" % self.summary_step, Figure(fig, close=True), exclude=("stdout", "log", "json", "csv"))
+        plt.close()
+        
     def log_simple(self, tag, simple_value, debug=False):
         add_simple_summary_sb3(self.summary_writer, tag, simple_value, self.summary_step)
         if debug:

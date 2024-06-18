@@ -16,7 +16,6 @@ class FullyConnectedMLP(nn.Module):
             nn.Linear(input_dim+emb_dim, h_size),
             nn.LeakyReLU(),
             nn.Linear(h_size, num_outputs),
-            nn.Tanh()
         )
 
     def forward(self, obs, act):
@@ -36,7 +35,7 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
         super().__init__(features_dim, h_size, emb_dim, n_actions, num_outputs)
         # my backbonde
         self.back_bone = nn.Sequential(
-            nn.Conv2d(observation_space.shape[0], 16, kernel_size=7, stride=3),
+            nn.Conv2d(observation_space.shape[0], 16, kernel_size=7, stride=2),
             nn.Dropout2d(0.5),
             # nn.BatchNorm2d(16),
             nn.LeakyReLU(0.01),
@@ -70,9 +69,7 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
         
         with torch.no_grad():
             n_flatten = self.back_bone(torch.as_tensor(observation_space.sample()[None]).float()).shape[1]
-
-        self.linear = nn.Sequential(nn.Linear(n_flatten, features_dim),
-                                    nn.ReLU())
+        self.linear = nn.Sequential(nn.Linear(n_flatten, features_dim), nn.ReLU())
         self.float()
         
     def forward(self, obs, act):

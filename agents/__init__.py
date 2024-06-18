@@ -1,2 +1,3 @@
-from .ppo.train import train_ppo
-from .dqn.train import train_dqn
+from .independent_dqn.agent import IndependentDQN
+from .independent_ppo.agent import IndependentPPO
+from .dqn2.agent import DQNRP, DQN

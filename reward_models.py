@@ -4,7 +4,6 @@ from collections import deque
 
 import numpy as np
 import torch
-from gym.spaces import Box, Dict
 from nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from segment_sampling import sample_segment_from_path
 from utils import corrcoef
@@ -61,7 +60,7 @@ class RewardModel(object):
 class ComparisonRewardPredictor(RewardModel):
     """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
 
-    def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_envs,
+    def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_envs, epochs, 
                  stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000):
         """ Initialize the reward predictor
         :param agent_logger: an AgentLogger object
@@ -81,8 +80,13 @@ class ComparisonRewardPredictor(RewardModel):
         self.stacked_frames = stacked_frames
         self.device = device
         self.fps = fps
+        self.epochs = epochs
         self.action_space = action_space
         self.num_envs = num_envs
+        self.lr = lr
+        self.clip_length = clip_length
+        self.train_freq = train_freq
+        self.comparison_collector_max_len = comparison_collector_max_len
         # Set up some bookkeeping
         self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
         self._frames_per_segment = clip_length * fps
@@ -94,8 +98,7 @@ class ComparisonRewardPredictor(RewardModel):
         self.comparison_collector = SyntheticComparisonCollector(max_len=comparison_collector_max_len)
         
         # Build and initialize our predictor model
- 
-        self.observation_space = Box(low=0, high=255, shape=(stacked_frames*observation_space.shape[0],) + observation_space.shape[1:], dtype=np.uint8)
+        self.observation_space = observation_space
         
         self.discrete_action_space = hasattr(action_space, "shape")
         self.act_shape = (action_space.n,) if self.discrete_action_space else action_space.shape
@@ -166,10 +169,12 @@ class ComparisonRewardPredictor(RewardModel):
 
         # We may be in a new part of the environment, so we take new segments to build comparisons from
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
-        print
-        if segment and random.random() < 0.25 or len(self.recent_segments) < 10:
-            self.recent_segments.append(segment)
-
+        # print
+        # if segment and random.random() < 0.25 or len(self.recent_segments) < 10:
+            # self.recent_segments.append(segment)
+            
+        self.recent_segments.append(segment)
+        
         # If we need more comparisons, then we build them from our recent segments
         if len(self.comparison_collector) < int(self.label_schedule.n_desired_labels):
             self.comparison_collector.add_segment_pair(
@@ -203,23 +208,26 @@ class ComparisonRewardPredictor(RewardModel):
             if i % 100 == 0:
                 print("%s/%s predictor pretraining iters... (Err: %s)" % (i, pretrain_iters, np.mean(losses)))
                 
-    def train_predictor(self, verbose=False):
+    def train_predictor(self, verbose=False, pre_train=False):
+        epches = 1 if pre_train else self.epochs
+        losses = np.zeros(epches)
         self.comparison_collector.label_unlabeled_comparisons()
+        for i in range(epches):
+            
 
-        minibatch_size = min(8, len(self.comparison_collector.labeled_decisive_comparisons))
-        labeled_comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
-        left_obs = np.asarray([comp['left']['obs'] for comp in labeled_comparisons])
-        left_acts = np.asarray([comp['left']['actions'] for comp in labeled_comparisons])
-        right_obs = np.asarray([comp['right']['obs'] for comp in labeled_comparisons])
-        right_acts = np.asarray([comp['right']['actions'] for comp in labeled_comparisons])
-        labels = np.asarray([comp['label'] for comp in labeled_comparisons])
-
-
-        loss = self._train_step(left_obs, left_acts, right_obs, right_acts, labels).item()
+            minibatch_size = min(8, len(self.comparison_collector.labeled_decisive_comparisons))
+            labeled_comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
+            left_obs = np.asarray([comp['left']['obs'] for comp in labeled_comparisons])
+            left_acts = np.asarray([comp['left']['actions'] for comp in labeled_comparisons])
+            right_obs = np.asarray([comp['right']['obs'] for comp in labeled_comparisons])
+            right_acts = np.asarray([comp['right']['actions'] for comp in labeled_comparisons])
+            labels = np.asarray([comp['label'] for comp in labeled_comparisons])
+            losses[i] = self._train_step(left_obs, left_acts, right_obs, right_acts, labels).item()
         self._elapsed_predictor_training_iters += 1
+        loss = np.mean(losses)
         
-        # TODO: write a proper summary writer for torch
-        self._write_training_summaries(loss)
+        if not pre_train:
+            self._write_training_summaries(loss)
         
         if verbose:
             print("Reward predictor training iter %s (Err: %s)" % (self._elapsed_predictor_training_iters, loss))
@@ -285,21 +293,36 @@ class ComparisonRewardPredictor(RewardModel):
 
     def copy(self):
         new_predictor = ComparisonRewardPredictor(
-            self.agent_logger, self.label_schedule, self.fps, self.observation_space,
-            self.action_space, self.num_envs, self.stacked_frames, self.device)
+            agent_logger=self.agent_logger,
+            label_schedule=self.label_schedule,
+            fps=self.fps,
+            observation_space=self.observation_space,
+            action_space=self.action_space,
+            num_envs=self.num_envs,
+            epochs=self.epochs,
+            stacked_frames=self.stacked_frames,
+            lr=self.lr,
+            device=self.device,
+            clip_length=self.clip_length,
+            train_freq=self.train_freq,
+            comparison_collector_max_len=self.comparison_collector_max_len)
         new_predictor.model.load_state_dict(self.model.state_dict())
-        # new_predictor.comparison_collector = self.comparison_collector.copy()
+
         return new_predictor
     
+    def dump(self, step):
+        self.agent_logger.dump(step)
+        
 class PrmComparisonRewardPredictor(RewardModel):
-    def __init__(self, num_agents, num_envs, agent_logger, label_schedule, fps, observation_space, action_space,
-                 stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000, pre_train=True):
+    def __init__(self, num_agents, num_envs, agent_loggers, label_schedules, fps, observation_space, action_space, epochs,
+                 stacked_frames, device, lr=0.0005, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000, pre_train=True):
         self.num_agents = num_agents
         self.num_envs = num_envs
-        self.agent_logger=agent_logger
-        self.label_schedule=label_schedule
+        self.agent_loggers=agent_loggers
+        self.label_schedules=label_schedules
         self.fps=fps
-        self.observation_space = Box(low=0, high=255, shape=(stacked_frames*observation_space.shape[0],) + observation_space.shape[1:], dtype=np.uint8)
+        self.epochs=epochs
+        self.observation_space = observation_space
 
         self.action_space=action_space
         self.stacked_frames=stacked_frames
@@ -312,25 +335,27 @@ class PrmComparisonRewardPredictor(RewardModel):
             self.predictors = [None for _ in range(num_agents)]
         else:
             self.predictors = [ComparisonRewardPredictor(fps=fps,
-                                                         observation_space=observation_space,
-                                                         action_space=action_space,
-                                                         agent_logger=agent_logger,
-                                                         label_schedule=label_schedule,
-                                                         stacked_frames=stacked_frames,
-                                                         num_envs=num_envs,
-                                                         device=device, 
-                                                         lr=lr,
-                                                         clip_length=clip_length,
-                                                         train_freq=train_freq,
-                                                         comparison_collector_max_len=comparison_collector_max_len)
-                        for _ in range(num_agents)]
+                                                         observation_space=self.observation_space,
+                                                         action_space=self.action_space,
+                                                         agent_logger=self.agent_loggers[i],
+                                                         label_schedule=self.label_schedules[i],
+                                                         stacked_frames=self.stacked_frames,
+                                                         num_envs=self.num_envs,
+                                                         device=self.device, 
+                                                         lr=self.lr,
+                                                         clip_length=self.clip_length,
+                                                         train_freq=self.train_freq,
+                                                         epochs=self.epochs,
+                                                         comparison_collector_max_len=self.comparison_collector_max_len)
+                        for i in range(num_agents)]
         
     def predict(self, obs, act):
         """Predict the reward for 1 time step """
         predictions = np.zeros(self.num_envs*self.num_agents)
-        for i, predictor in enumerate(self.predictors):
-            r = predictor.model(obs[i::self.num_agents].float(), act[i::self.num_agents].long().to(self.device))
-            predictions[i::self.num_agents] = r.cpu().detach().numpy().squeeze()
+        with torch.no_grad():
+            for i, predictor in enumerate(self.predictors):
+                r = predictor.model(obs[i::self.num_agents].float(), act[i::self.num_agents].long())
+                predictions[i::self.num_agents] = r.cpu().detach().numpy().squeeze()
         return predictions
         
     def path_callback(self, path, agent_id):
@@ -349,17 +374,19 @@ class PrmComparisonRewardPredictor(RewardModel):
         """Pretrain the reward model using random rollouts. train one predictor and copy itself to each agent's predictor such that after pretrain all predictors are exactly the same
         """
         print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+        # TODO: try using logger and scheduler as NONE
         predictor = ComparisonRewardPredictor(fps=self.fps,
                                               observation_space=self.observation_space,
                                               action_space=self.action_space,
-                                              agent_logger=self.agent_logger,
-                                              label_schedule=self.label_schedule,
+                                              agent_logger=None, #self.agent_logger,
+                                              label_schedule=None, #self.label_schedule,
                                               stacked_frames=self.stacked_frames,
                                               device=self.device, 
                                               lr=self.lr,
                                               num_envs=self.num_envs,
                                               clip_length=self.clip_length,
                                               train_freq=self.train_freq,
+                                              epochs=self.epochs,
                                               comparison_collector_max_len=self.comparison_collector_max_len)
         
         pretrain_segments = segments_from_rand_rollout(
@@ -378,25 +405,41 @@ class PrmComparisonRewardPredictor(RewardModel):
         # Start the actual training
         losses = []
         for i in range(pretrain_iters):
-            loss = predictor.train_predictor()  # Train on pretraining labels
+            loss = predictor.train_predictor(pre_train=True)  # Train on pretraining labels
             losses.append(loss)
             if i % 100 == 0:
                 print("%s/%s predictor pretraining iters... (Err: %s)" % (i, pretrain_iters, np.mean(losses)))
         
-        self.predictors = [predictor.copy() for _ in range(self.num_agents)]
-                
+        self.predictors = self.duplicat_predictor(predictor)
+        
+    def duplicat_predictor(self, predictor):
+        print("Duplicating predictor to all agents")
+        predictors = [predictor.copy() for _ in range(self.num_agents)]
+        for i, predictor in enumerate(predictors):
+            predictor.agent_logger = self.agent_loggers[i]
+            predictor.label_schedule = self.label_schedules[i]
+            
+        return predictors
+            
     def train_predictor(self, verbose=False):
         losses = [predictor.train_predictor(verbose) for predictor in self.predictors]
         return np.mean(losses)
     
     def buffer_usage(self):
-        return self.predictors[0].comparison_collector.buffer_usage()
+        try:
+            return self.comparison_collector.buffer_usage()
+        except:
+            return 0
 
     def get_paths(self):
         for i, predictor in enumerate(self.predictors):
             samples = predictor.ep_buffer.get()
             for sample in samples:
                 yield sample, i # i is agent_id 
+
+    def dump(self, step):
+        for predictor in self.predictors:
+            predictor.dump(step)
 
 class CrmComparisonRewardPredictor(RewardModel):
     def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_agents,
@@ -610,13 +653,28 @@ class CrmComparisonRewardPredictor(RewardModel):
             "labels/labeled_comparisons", len(self.comparison_collector.labeled_decisive_comparisons))
     
     def buffer_usage(self):
-        return self.comparison_collector.buffer_usage()
+        try:
+            return self.comparison_collector.buffer_usage()
+        except:
+            return 0
 
     def copy(self):
         new_predictor = ComparisonRewardPredictor(
-            self.agent_logger, self.label_schedule, self.fps, self.observation_space,
-            self.action_space, self.stacked_frames, self.device)
+            agent_logger=self.agent_logger,
+            label_schedule=self.label_schedule,
+            fps=self.fps,
+            observation_space=self.observation_space,
+            action_space=self.action_space,
+            num_envs=self.num_envs,
+            epochs=self.epochs,
+            stacked_frames=self.stacked_frames,
+            lr=self.lr,
+            clip_length=self.clip_length,
+            train_freq=self.train_freq,
+            comparison_collector_max_len=self.comparison_collector_max_len)
+
         new_predictor.model.load_state_dict(self.model.state_dict())
-        new_predictor.comparison_collector = self.comparison_collector.copy()
+
         return new_predictor
-    
+
+

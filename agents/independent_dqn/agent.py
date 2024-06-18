@@ -92,7 +92,6 @@ class IndependentDQN(sb3_DQN):
         self.num_agents = num_agents
         self.num_envs = env.num_envs // num_agents
         self.predictor = predictor
-
         
         
         env_fn = lambda: DummyGymEnv(self.observation_space, self.action_space)
@@ -244,7 +243,8 @@ class IndependentDQN(sb3_DQN):
         self.logger.record("usage/dqn_buffer_percentage", self.agents[0].replay_buffer.size() / self.agents[0].buffer_size * self.num_envs)
         self.logger.record("usage/predictor_buffer", self.predictor.buffer_usage())
         
-        self.logger.dump(step=self.num_timesteps)            
+        self.logger.dump(step=self.num_timesteps)   
+        self.predictor.dump(step=self.num_timesteps)         
     
     def collect_rollouts(
         self,
