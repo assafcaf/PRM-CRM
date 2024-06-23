@@ -337,6 +337,7 @@ class IndependentDQN(sb3_DQN):
 
             # Give access to local variables
             callback.update_locals(locals())
+            
             # Only stop training if return value is False, not when it is None.
             if callback.on_step() is False:
                 return RolloutReturn(n_collected_steps * env.num_envs, n_collected_episodes, continue_training=False)

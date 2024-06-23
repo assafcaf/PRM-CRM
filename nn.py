@@ -24,6 +24,11 @@ class FullyConnectedMLP(nn.Module):
         x = torch.cat([flat_obs, emb], axis=1)
         return self.mlp(x)
     
+    def copy(self):
+        """Return a copy of the model."""
+        copy = FullyConnectedMLP(self.observation_space, self.h_size, self.emb_dim, self.n_actions, self.num_outputs)
+        copy.load_state_dict(self.state_dict())
+        return copy 
 
 class SimpleConvolveObservationQNet(FullyConnectedMLP):
     """
@@ -71,7 +76,13 @@ class SimpleConvolveObservationQNet(FullyConnectedMLP):
             n_flatten = self.back_bone(torch.as_tensor(observation_space.sample()[None]).float()).shape[1]
         self.linear = nn.Sequential(nn.Linear(n_flatten, features_dim), nn.ReLU())
         self.float()
-        
+    
+    def copy(self):
+        """Return a copy of the model."""
+        copy = SimpleConvolveObservationQNet(self.observation_space, self.features_dim, self.h_size, self.emb_dim, self.n_actions, self.num_outputs)
+        copy.load_state_dict(self.state_dict())
+        return copy
+    
     def forward(self, obs, act):
         # normalize the observation if it is not already
         if obs.max() > 1:

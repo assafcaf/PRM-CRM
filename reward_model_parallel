@@ -10,7 +10,7 @@ from utils import corrcoef
 from comparison_collectors import SyntheticComparisonCollector
 from segment_sampling import segments_from_rand_rollout
 from agents.independent_dqn.buffer import PredictorBuffer
-
+import multiprocessing
 
 def nn_predict_rewards(obs_segments, act_segments, network, observation_space, act_shape):
     """
@@ -313,6 +313,73 @@ class ComparisonRewardPredictor(RewardModel):
     def dump(self, step):
         self.agent_logger.dump(step)
 
+    def _train_on_process(self, conn, model, comparison_collector):
+        """copy network and comparison collector to the process and train the model"""
+        
+        losses = np.zeros(self.epochs)
+        for i in range(self.epochs):
+            minibatch_size = min(8, len(comparison_collector.labeled_decisive_comparisons))
+            labeled_comparisons = random.sample(comparison_collector.labeled_decisive_comparisons, minibatch_size)
+            left_obs = np.asarray([comp['left']['obs'] for comp in labeled_comparisons])
+            left_acts = np.asarray([comp['left']['actions'] for comp in labeled_comparisons])
+            right_obs = np.asarray([comp['right']['obs'] for comp in labeled_comparisons])
+            right_acts = np.asarray([comp['right']['actions'] for comp in labeled_comparisons])
+            labels = np.asarray([comp['label'] for comp in labeled_comparisons])
+            
+            # move to torch
+            left_obs = torch.tensor(np.stack(left_obs))
+            left_acts = torch.tensor(left_acts)
+                    
+            right_obs = torch.tensor(np.stack(right_obs))
+            right_acts = torch.tensor(right_acts)
+            
+            labels = torch.tensor(labels).to(self.device)
+            
+            # predict rewards
+            rewards_left = self._predict_rewards(left_obs, left_acts, model)
+            rewards_right = self._predict_rewards(right_obs, right_acts, model)
+
+            # We use trajectory segments rather than individual (state, action) pairs because
+            # video clips of segments are easier for humans to evaluate
+            segment_reward_pred_left = rewards_left.sum(axis=1, keepdim=True)
+            segment_reward_pred_right = rewards_right.sum(axis=1, keepdim=True)
+            reward_logits = torch.cat([segment_reward_pred_left, segment_reward_pred_right], axis=1) # (batch_size, 2)
+
+            loss = self.loss(reward_logits, labels)
+            
+            self.train_op.zero_grad()
+            loss.backward()
+            self.train_op.step()
+            torch.cuda.empty_cache()
+            losses[i] = loss.item()
+
+
+        loss = np.mean(losses)
+        self._write_training_summaries(loss)
+        
+        conn.send(loss, model)
+        conn.close()
+    
+    def _train_predictor_in_process(self):
+        # Method to start the training process
+        
+        # create new copy of model
+        model = self.model.copy()
+        model = model.to(self.device)
+        
+        # create new copy of comparison collector
+        comparison_collector = self.comparison_collector.copy()
+        
+        parent_conn, child_conn = multiprocessing.Pipe()
+        process = multiprocessing.Process(target=self._train_on_process, args=(child_conn, model, comparison_collector, self.epochs))
+        process.start()
+        process.join()
+        loss, model = parent_conn.recv()
+        self.model = model
+        return loss
+        
+        self._elapsed_predictor_training_iters += self.epochs
+    
 class PrmComparisonRewardPredictor(RewardModel):
     def __init__(self, num_agents, num_envs, agent_loggers, label_schedules, fps, observation_space, action_space, epochs,
                  stacked_frames, device, lr=0.0005, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000, pre_train=True):
@@ -441,241 +508,4 @@ class PrmComparisonRewardPredictor(RewardModel):
         if self.predictors is not None:
             for predictor in self.predictors:
                 predictor.dump(step)
-
-class CrmComparisonRewardPredictor(RewardModel):
-    def __init__(self, agent_logger, label_schedule, fps, observation_space, action_space, num_agents,
-                stacked_frames, device, lr=0.0001, clip_length=0.1, train_freq=1e4, comparison_collector_max_len=1000):
-        """ Initialize the reward predictor
-        :param agent_logger: an AgentLogger object
-        :param label_schedule: a LabelSchedule object
-        :param fps: the frames per second of the environment
-        :param observation_space: the observation space of the environment
-        :param action_space: the action space of the environment
-        :param stacked_frames: the number of frames to stack
-        :param device: the device to run the model on
-        :param lr: the learning rate for the model
-        :param clip_length: the length of the video clip to use for training
-        :param train_freq: how often to train the model
-        :param comparison_collector_max_len: the maximum number of comparisons to store
-        """
-        self.agent_logger = agent_logger
-        self.label_schedule = label_schedule
-        self.stacked_frames = stacked_frames
-        self.device = device
-        self.num_agents = num_agents
-        
-        # Set up some bookkeeping
-        self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
-        self._frames_per_segment = clip_length * fps
-        self._steps_since_last_training = 0
-        self._n_timesteps_per_predictor_training = train_freq  # How often should we train our predictor?
-        self._elapsed_predictor_training_iters = 0
-
-        # Build and initialize our comparison_collector
-        self.comparison_collector = SyntheticComparisonCollector(max_len=comparison_collector_max_len)
-        
-        # Build and initialize our predictor model
-
-        self.observation_space = (stacked_frames*observation_space.shape[0],) + observation_space.shape[1:]
-        
-        self.discrete_action_space = hasattr(action_space, "shape")
-        self.act_shape = (action_space.n,) if self.discrete_action_space else action_space.shape
-        
-        self.model = self._build_model(num_agents)
-        self.loss = torch.nn.CrossEntropyLoss()
-        self.train_op = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)
-                    
-    def _predict_rewards(self, obs_segments, act_segments, network):
-        """
-        :param obs_segments: tensor with shape = (batch_size, segment_length) + observation_space
-        :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
-        :param network: neural net with .run() that maps obs and act tensors into a (scalar) value tensor
-        :return: tensor with shape = (batch_size, segment_length)
-        """
-        obs_segments = obs_segments.to(self.device).float()
-        act_segments = act_segments.to(self.device)
-        return nn_predict_rewards(obs_segments, act_segments, network, self.observation_space, self.act_shape)
-
-    def _build_model(self):
-        """
-        Our model takes in path segments with states and actions, and generates Q values.
-        These Q values serve as predictions of the true reward.
-        We can compare two segments and sum the Q values to get a prediction of a label
-        of which segment is better. We then learn the weights for our model by comparing
-        these labels with an authority (either a human or synthetic labeler).
-        """
-        # Set up action placeholder
-        if self.discrete_action_space:
-            # HACK Use a convolutional network for Atari
-            # TODO Should check the input space dimensions, not the output space!
-            net = SimpleConvolveObservationQNet(observation_space=self.observation_space, h_size=64, emb_dim=32, n_actions=self.act_shape[0], num_outputs=self.num_agents)
-             
-        else:
-            # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
-            net = FullyConnectedMLP(observation_space=self.ob, h_size=64, emb_dim=32, n_actions=self.act_shape[0],  num_outputs=self.num_agents)
-
-
-        # We use trajectory segments rather than individual (state, action) pairs because
-        # video clips of segments are easier for humans to evaluate
-        return net.to(self.device)
-
-    def predict(self, obs, act):
-        """Predict the reward for 1 time step """
-        r = self.model(obs.float(), act.long().to(self.device))
-        return r.cpu().detach().numpy().squeeze()
-        
-    def predict_reward(self, path):
-        """Predict the reward for each step in a given path"""
-        obs = path["obs"].to(self.device).float()
-        action = path["actions"].to(self.device).long()
-
-        return self.model(obs, action).detach().cpu()
-
-    def path_callback(self, path, agent_id):
-        path_length = len(path["obs"])
-        self._steps_since_last_training += path_length
-
-        # TODO: write a proper summary writer for torch
-        self.agent_logger.log_episode(path)
-
-        # We may be in a new part of the environment, so we take new segments to build comparisons from
-        segment = sample_segment_from_path(path, int(self._frames_per_segment))
-        if segment and random.random() < 0.25:
-            self.recent_segments.append(segment)
-
-        # If we need more comparisons, then we build them from our recent segments
-        if len(self.comparison_collector) < int(self.label_schedule.n_desired_labels):
-            self.comparison_collector.add_segment_pair(
-                random.choice(self.recent_segments),
-                random.choice(self.recent_segments))
-
-        # Train our predictor every X steps
-        if self._steps_since_last_training >= int(self._n_timesteps_per_predictor_training):
-            self.train_predictor()
-            self._steps_since_last_training = 0
-
-    def pre_trian(self, env_id, make_env, pretrain_labels, clip_length, workers, stacked_frames, n_steps, pretrain_iters):
-        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-        pretrain_segments = segments_from_rand_rollout(
-            env_id, make_env, n_desired_segments=pretrain_labels * 2,
-            clip_length_in_seconds=clip_length, workers=workers,
-            stacked_frames=stacked_frames, max_episode_steps=n_steps)
-        for i in range(pretrain_labels):  # Turn our random segments into comparisons
-            self.comparison_collector.add_segment_pair(pretrain_segments[i], pretrain_segments[i + pretrain_labels])
-
-        # Sleep until the human has labeled most of the pretraining comparisons
-        while len(self.comparison_collector.labeled_comparisons) < int(pretrain_labels * 0.75):
-            self.comparison_collector.label_unlabeled_comparisons()
-            print("%s synthetic labels generated... " % (len(self.comparison_collector.labeled_comparisons)))
-
-        # Start the actual training
-        losses = []
-        for i in range(pretrain_iters):
-            loss = self.train_predictor()  # Train on pretraining labels
-            losses.append(loss)
-            if i % 100 == 0:
-                print("%s/%s predictor pretraining iters... (Err: %s)" % (i, pretrain_iters, np.mean(losses)))
-                
-    def train_predictor(self, verbose=False):
-        self.comparison_collector.label_unlabeled_comparisons()
-
-        minibatch_size = min(8, len(self.comparison_collector.labeled_decisive_comparisons))
-        labeled_comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
-        left_obs = np.asarray([comp['left']['obs'] for comp in labeled_comparisons])
-        left_acts = np.asarray([comp['left']['actions'] for comp in labeled_comparisons])
-        right_obs = np.asarray([comp['right']['obs'] for comp in labeled_comparisons])
-        right_acts = np.asarray([comp['right']['actions'] for comp in labeled_comparisons])
-        labels = np.asarray([comp['label'] for comp in labeled_comparisons])
-
-
-        loss = self._train_step(left_obs, left_acts, right_obs, right_acts, labels).item()
-        self._elapsed_predictor_training_iters += 1
-        
-        # TODO: write a proper summary writer for torch
-        self._write_training_summaries(loss)
-        
-        if verbose:
-            print("Reward predictor training iter %s (Err: %s)" % (self._elapsed_predictor_training_iters, loss))
-            
-        return loss
-    
-    def _train_step(self, left_obs, left_acts, right_obs, right_acts, labels):
-        """ Train the model on a single batch """
-        
-        # move to torch
-        left_obs = torch.tensor(np.stack(left_obs))
-        left_acts = torch.tensor(left_acts)
-                
-        right_obs = torch.tensor(np.stack(right_obs))
-        right_acts = torch.tensor(right_acts)
-        
-        labels = torch.tensor(labels).to(self.device)
-        
-        # predict rewards
-        rewards_left = self._predict_rewards(left_obs, left_acts, self.model).mean(axis=1, keepdim=True)
-        rewards_right = self._predict_rewards(right_obs, right_acts, self.model).mean(axis=1, keepdim=True)
-
-        # We use trajectory segments rather than individual (state, action) pairs because
-        # video clips of segments are easier for humans to evaluate
-        segment_reward_pred_left = rewards_left.sum(axis=1, keepdim=True)
-        segment_reward_pred_right = rewards_right.sum(axis=1, keepdim=True)
-        reward_logits = torch.cat([segment_reward_pred_left, segment_reward_pred_right], axis=1) # (batch_size, 2)
-
-        loss = self.loss(reward_logits, labels)
-        
-        self.train_op.zero_grad()
-        loss.backward()
-        self.train_op.step()
-        torch.cuda.empty_cache()
-        return loss
-   
-    def _write_training_summaries(self, loss):
-        self.agent_logger.log_simple("predictor/_loss", loss)
-
-        # Calculate correlation between true and predicted reward by running validation on recent episodes
-        recent_paths = self.agent_logger.get_recent_paths_with_padding()
-        if len(recent_paths) > 1 and self.agent_logger.summary_step % 10 == 0:  # Run validation every 10 iters
-            idx = random.sample(range(len(recent_paths)), min(len(recent_paths), 10))
-            validation_obs = np.asarray([path["obs"] for i, path in enumerate(recent_paths) if i in idx])
-            validation_acts = np.asarray([path["actions"] for i, path in enumerate(recent_paths) if i in idx])
-            q_value = self._predict_rewards(torch.from_numpy(validation_obs),
-                                            torch.from_numpy(validation_acts),
-                                            self.model).detach().cpu().numpy()
-            ep_reward_pred = np.sum(q_value, axis=1)
-            reward_true = np.asarray([path['original_rewards'] for i, path in enumerate(recent_paths) if i in idx])
-            ep_reward_true = np.sum(reward_true, axis=1)
-            self.agent_logger.log_simple("predictor/correlations", corrcoef(ep_reward_true, ep_reward_pred))
-            torch.cuda.empty_cache()
-            
-        self.agent_logger.log_simple("predictor/num_training_iters", self._elapsed_predictor_training_iters)
-        self.agent_logger.log_simple("labels/desired_labels", self.label_schedule.n_desired_labels)
-        self.agent_logger.log_simple("labels/total_comparisons", len(self.comparison_collector))
-        self.agent_logger.log_simple(
-            "labels/labeled_comparisons", len(self.comparison_collector.labeled_decisive_comparisons))
-    
-    def buffer_usage(self):
-        try:
-            return self.comparison_collector.buffer_usage()
-        except:
-            return 0
-
-    def copy(self):
-        new_predictor = ComparisonRewardPredictor(
-            agent_logger=self.agent_logger,
-            label_schedule=self.label_schedule,
-            fps=self.fps,
-            observation_space=self.observation_space,
-            action_space=self.action_space,
-            num_envs=self.num_envs,
-            epochs=self.epochs,
-            stacked_frames=self.stacked_frames,
-            lr=self.lr,
-            clip_length=self.clip_length,
-            train_freq=self.train_freq,
-            comparison_collector_max_len=self.comparison_collector_max_len)
-
-        new_predictor.model.load_state_dict(self.model.state_dict())
-
-        return new_predictor
-
 

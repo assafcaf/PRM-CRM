@@ -35,23 +35,23 @@ def arg_pars():
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--env_id', default='harvest', type=str)  # 'PongNoFrameskip-v4'
     parser.add_argument('-n', '--name', default='syn-{}_metric-{}', type=str)
-    parser.add_argument('-w', '--workers', default=24, type=int)
+    parser.add_argument('-w', '--workers', default=8, type=int)
     parser.add_argument('-l', '--n_labels', default=int(1e4), type=int)
     parser.add_argument('-L', '--pretrain_labels', default=250, type=int)
     parser.add_argument('-t', '--num_timesteps', default=3e8, type=int)
     parser.add_argument('-a', '--agent', default="ppo", type=str, choices=["ppo", "dqn"])
     parser.add_argument('-i', '--pretrain_iters', default=500, type=int)
-    parser.add_argument('-V', '--no_videos', action="store_true", default=True)
+    parser.add_argument('-V', '--no_videos', action="store_true", default=False)
     parser.add_argument('-f', '--stacked_frames', default=1, type=int)
     parser.add_argument('-ns', '--n_steps', default=1000, type=int)
-    parser.add_argument('-tf', '--train_freq', default=4, type=int)
+    parser.add_argument('-tf', '--train_freq', default=1, type=int)
     parser.add_argument('-na', '--n_agents', default=5, type=int)
     parser.add_argument('-pe', '--predictor_epochs', default=4, type=int)
     parser.add_argument('-ng', '--num_gpu', default="0", type=str, help="gpu id")
-    parser.add_argument('-br', '--buffer_ratio', default=0.5, type=float, help='ratio of buffer size to number of labels (to reduce memory usage)')
+    parser.add_argument('-br', '--buffer_ratio', default=0.15, type=float, help='ratio of buffer size to number of labels (to reduce memory usage)')
     parser.add_argument('-d', '--debug', action="store_true", default=False)
     parser.add_argument('-c', '--same_color', action="store_true", default=False)
-    parser.add_argument('-g', '--gray_scale', action="store_true", default=True)
+    parser.add_argument('-g', '--gray_scale', action="store_true", default=False)
     parser.add_argument('-ן', '--independent', action="store_true", default=True)
     parser.add_argument('-r', '--real_rewards', action="store_true", default=False)
     parser.add_argument('-sd', '--same_dim', action="store_true", default=False)
@@ -75,14 +75,13 @@ def main():
     # Parse arguments
     args = arg_pars()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.num_gpu
-    pre_trian = True
+    pre_trian = False
     train_freq = args.train_freq * args.n_steps
     if args.debug:
         pre_trian = False
         if not args.real_rewards:
             args.workers = 2
     num_envs = args.workers   
-    
     # Set up the run name and save directory 
     args.name = args.name.format(args.n_labels, metrics[args.metric])
     env_id = args.env_id
@@ -223,4 +222,3 @@ def main():
 if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn')# good solution !!!!
     main()
-    

@@ -167,8 +167,10 @@ def stack_frames(obs, depth):
         # Don't stack
         return np.array(obs)
     stacked_frames = np.array([offset_for_stacking(obs, offset) for offset in range(depth)])
-    stacked_frames = stacked_frames.transpose((1, 0, 2, 3, 4))
-    stacked_frames.shape = (len(obs), depth) + obs[0].shape[1:]
+    # stacked_frames = stacked_frames.transpose((1, 0, 2, 3, 4))
+    # stacked_frames.shape = (len(obs), depth) + obs[0].shape[1:]
+    stacked_frames = np.hstack(stacked_frames)
+
     
     
     # Move the stack to be at the end and return
